@@ -89,6 +89,7 @@
   .layout{display:flex;min-height:calc(100vh - 58px);}
   .sidebar{
     width:250px;background:var(--vert-fonce);border-right:1px solid rgba(0,0,0,.2);padding:16px 0;flex-shrink:0;
+    position:sticky;top:58px;height:calc(100vh - 58px);overflow-y:auto;
   }
   .sidebar button.menuItem{
     display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;
@@ -260,11 +261,15 @@ insert into catechese_app_config (id) values (1) on conflict (id) do nothing;
 create table if not exists catechese_app_users (
   id uuid primary key default gen_random_uuid(),
   nom text not null,
+  nom_utilisateur text unique,
   mot_de_passe text not null,
   role text not null check (role in ('createur','responsable','secretariat','animateur','aumonier')),
   photo_url text,
   created_at timestamptz default now()
 );
+
+-- Si la table existait déjà avant cette mise à jour, on ajoute la colonne manquante :
+alter table catechese_app_users add column if not exists nom_utilisateur text;
 
 -- Classes de catéchèse (Phase 1)
 create table if not exists catechese_classes (
@@ -483,8 +488,8 @@ async function handleLogin(){
 
   if(!sb){ errEl.textContent = "Supabase n'est pas encore configuré (voir haut du fichier)."; return; }
 
-  const {data, error} = await sb.from('catechese_app_users').select('*').eq('nom', nom).eq('mot_de_passe', pass).maybeSingle();
-  if(error || !data){ errEl.textContent = "Nom ou mot de passe incorrect."; return; }
+  const {data, error} = await sb.from('catechese_app_users').select('*').eq('nom_utilisateur', nom).eq('mot_de_passe', pass).maybeSingle();
+  if(error || !data){ errEl.textContent = "Nom d'utilisateur ou mot de passe incorrect."; return; }
 
   currentUser = data;
   enterApp();
@@ -694,8 +699,7 @@ async function renderAccueil(){
     <div style="background:var(--gris-fonce);margin:-26px -30px;padding:26px 30px;min-height:calc(100vh - 58px)">
       <h2 style="color:#fff">🏠 Accueil</h2>
       <div class="breadcrumb" style="color:#c3c6cc">Bienvenue, ${esc(currentUser.nom)}</div>
-      <div class="card" style="background:var(--vert-fonce);display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-        ${c.logo_url ? `<img src="${esc(c.logo_url)}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;box-shadow:0 2px 10px rgba(0,0,0,.3)">` : ''}
+      <div class="card" style="background:var(--vert-fonce);display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap">
         <div>
           <h3 style="border:none;padding:0;margin:0 0 4px;color:#fff">${esc(c.nom_paroisse || 'Paroisse non configurée')}</h3>
           <div style="color:var(--beige);font-size:13px">
@@ -703,6 +707,7 @@ async function renderAccueil(){
             ${c.annee_catechese ? 'Année de catéchèse ' + esc(c.annee_catechese) : ''}
           </div>
         </div>
+        ${c.logo_url ? `<img src="${esc(c.logo_url)}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;box-shadow:0 2px 10px rgba(0,0,0,.3)">` : ''}
       </div>
       <div class="grid2" id="accueilStats">
         <div class="card"><div class="placeholder">Chargement des statistiques…</div></div>
@@ -2004,11 +2009,32 @@ function renderOptionParoisse(){
         <div class="field"><label>Numéro (paroisse / bureau catéchèse)</label><input id="optTel" value="${esc(c.telephone||'')}"></div>
         <div class="field"><label>Année de catéchèse</label><input id="optAnnee" placeholder="ex: 2025-2026" value="${esc(c.annee_catechese||'')}"></div>
         <div class="field"><label>Montant inscription (FCFA)</label><input id="optMontant" type="number" value="${esc(c.montant_inscription||0)}"></div>
-        <div class="field"><label>Logo de la paroisse (image)</label><input id="optLogoFile" type="file" accept="image/*"></div>
+        <div class="field">
+          <label>Logo de la paroisse (image)</label>
+          <input id="optLogoFile" type="file" accept="image/*" onchange="previsualiserLogo(event)">
+          <div class="rowFlex" style="margin-top:10px">
+            <img id="logoPreview" src="${esc(c.logo_url||'')}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;background:#eef2fb;display:${c.logo_url?'block':'none'}">
+            <span id="logoPreviewLabel" style="color:var(--gris);font-size:12px">${c.logo_url?'Logo actuel':'Aucun logo choisi'}</span>
+          </div>
+        </div>
       </div>
       <p style="font-size:12px;color:var(--gris);margin-top:8px">Ces informations apparaissent sur la page d'accueil et en en-tête de tous les PDF téléchargés (attestations, listes de classe, historiques).</p>
       <div style="margin-top:16px"><button class="btn gold" style="width:auto;padding:11px 22px" onclick="saveOptionParoisse()">Enregistrer</button></div>
     </div>`;
+}
+
+function previsualiserLogo(event){
+  const file = event.target.files[0];
+  const img = document.getElementById('logoPreview');
+  const label = document.getElementById('logoPreviewLabel');
+  if(!file){ img.style.display='none'; label.textContent='Aucun logo choisi'; return; }
+  const reader = new FileReader();
+  reader.onload = e=>{
+    img.src = e.target.result;
+    img.style.display = 'block';
+    label.textContent = `Aperçu : ${file.name}`;
+  };
+  reader.readAsDataURL(file);
 }
 
 async function saveOptionParoisse(){
@@ -2133,15 +2159,17 @@ async function renderOptionUtilisateurs(){
   const rows = usersCache.map(u=>`
     <tr>
       <td>${esc(u.nom)}</td>
+      <td>${esc(u.nom_utilisateur||'—')}</td>
       <td><span class="badge ${u.role}">${roleLabel(u.role)}</span></td>
       <td><button class="smallBtn del" onclick="deleteUser('${u.id}')">Supprimer</button></td>
-    </tr>`).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--gris)">Aucun utilisateur ajouté (en dehors du créateur)</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucun utilisateur ajouté (en dehors du créateur)</td></tr>`;
 
   document.getElementById('optionTabContent').innerHTML = `
     <div class="card">
       <h3>Ajouter un utilisateur</h3>
       <div class="grid2">
-        <div class="field"><label>Nom</label><input id="newUserNom" placeholder="Nom complet"></div>
+        <div class="field"><label>Nom complet</label><input id="newUserNom" placeholder="ex: Carmel Kouassi"></div>
+        <div class="field"><label>Nom d'utilisateur (identifiant de connexion)</label><input id="newUserLogin" placeholder="ex: carmel"></div>
         <div class="field"><label>Mot de passe</label><input id="newUserPass" type="text" placeholder="Mot de passe"></div>
         <div class="field"><label>Rôle</label>
           <select id="newUserRole">
@@ -2157,9 +2185,9 @@ async function renderOptionUtilisateurs(){
     <div class="card">
       <h3>Utilisateurs (${usersCache.length + 1})</h3>
       <table>
-        <thead><tr><th>Nom</th><th>Rôle</th><th></th></tr></thead>
+        <thead><tr><th>Nom complet</th><th>Nom d'utilisateur</th><th>Rôle</th><th></th></tr></thead>
         <tbody>
-          <tr><td>Jean Marc</td><td><span class="badge createur">Créateur</span></td><td style="color:var(--gris);font-size:12px">Compte principal</td></tr>
+          <tr><td>Jean Marc</td><td>Jean Marc</td><td><span class="badge createur">Créateur</span></td><td style="color:var(--gris);font-size:12px">Compte principal</td></tr>
           ${rows}
         </tbody>
       </table>
@@ -2193,11 +2221,18 @@ function copySqlScript(){
 
 async function addUser(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
+  const nom = document.getElementById('newUserNom').value.trim();
+  const nom_utilisateur = document.getElementById('newUserLogin').value.trim();
   const mot_de_passe = document.getElementById('newUserPass').value;
   const role = document.getElementById('newUserRole').value;
-  if(!nom || !mot_de_passe){ showToast("Nom et mot de passe requis", true); return; }
-  const {error} = await sb.from('catechese_app_users').insert({nom, mot_de_passe, role});
-  if(error){ showToast("Erreur : "+error.message, true); return; }
+  if(!nom || !nom_utilisateur || !mot_de_passe){ showToast("Nom complet, nom d'utilisateur et mot de passe requis", true); return; }
+  if(nom_utilisateur.toLowerCase() === 'jean marc'){ showToast("Ce nom d'utilisateur est réservé au créateur", true); return; }
+  const {error} = await sb.from('catechese_app_users').insert({nom, nom_utilisateur, mot_de_passe, role});
+  if(error){
+    if(error.message.includes('duplicate') || error.code==='23505') showToast("Ce nom d'utilisateur est déjà pris", true);
+    else showToast("Erreur : "+error.message, true);
+    return;
+  }
   showToast("Utilisateur ajouté ✓");
   renderOptionUtilisateurs();
 }
