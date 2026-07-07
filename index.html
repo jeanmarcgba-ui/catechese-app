@@ -141,6 +141,34 @@
   }
   .toast.show{opacity:1;transform:translateY(0);}
   .toast.error{background:var(--rouge);}
+
+  /* Présence & notifications */
+  .presenceWidget{position:relative;}
+  .presenceDot{width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;margin-right:5px;}
+  .presenceDropdown{
+    position:absolute;top:38px;right:0;background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);
+    padding:10px;min-width:180px;z-index:50;display:none;
+  }
+  .presenceDropdown.open{display:block;}
+  .presenceDropdown div{padding:6px 8px;font-size:13px;color:#1f2937;display:flex;align-items:center;}
+  .menuBadge{
+    background:var(--rouge);color:#fff;font-size:10px;font-weight:700;border-radius:10px;
+    padding:1px 6px;margin-left:auto;
+  }
+  .contactDot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;flex-shrink:0;}
+  .contactDot.online{background:#22c55e;}
+  .contactDot.offline{background:#c9ccd1;}
+  #notifPanel{
+    position:fixed;bottom:20px;right:20px;width:300px;max-width:calc(100vw - 40px);z-index:200;
+  }
+  .notifCard{
+    background:#fff;border-left:4px solid var(--or);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);
+    padding:12px 14px;margin-top:10px;cursor:pointer;animation:notifIn .25s ease;
+  }
+  .notifCard:hover{background:#fafbfe;}
+  .notifCard b{color:var(--bleu-nuit);}
+  .notifCard .notifPreview{color:var(--gris);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  @keyframes notifIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
 </style>
 </head>
 <body>
@@ -177,8 +205,13 @@
       <span id="topbarParoisse">CATÉCHÈSE</span>
     </div>
     <div class="userInfo">
+      <div class="presenceWidget">
+        <button onclick="togglePresenceDropdown()" id="presenceBtn">🟢 0 en ligne</button>
+        <div class="presenceDropdown" id="presenceDropdown"></div>
+      </div>
       <span id="topbarUserName"></span>
       <span class="role" id="topbarUserRole"></span>
+      <button onclick="actualiserPageCourante()" id="refreshBtn" title="Recharger les données de cette page">🔄 Actualiser</button>
       <button onclick="toggleSidebar()" id="burgerBtn" style="display:none;">☰ Menu</button>
       <button onclick="handleLogout()">Déconnexion</button>
     </div>
@@ -188,6 +221,8 @@
     <div class="content" id="content"></div>
   </div>
 </div>
+
+<div id="notifPanel"></div>
 
 <div class="toast" id="toast"></div>
 
@@ -353,8 +388,17 @@ create table if not exists catechese_messages (
   type_message text check (type_message in ('texte','photo','video','vocal')),
   media_url text,
   modifie boolean default false,
+  lu boolean default false,
   created_at timestamptz default now()
 );
+
+-- Présence en ligne des utilisateurs
+create table if not exists catechese_presence (
+  nom text primary key,
+  derniere_connexion timestamptz default now()
+);
+alter table catechese_presence disable row level security;
+alter table catechese_messages disable row level security;
 
 -- Row Level Security : à activer et configurer selon les rôles une fois l'authentification en place
 -- alter table catechese_app_users enable row level security;
@@ -447,6 +491,7 @@ async function handleLogin(){
 }
 
 function handleLogout(){
+  arreterSuiviTempsReel();
   currentUser = null;
   document.getElementById('appShell').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
@@ -463,10 +508,129 @@ function enterApp(){
   if(appConfig && appConfig.nom_paroisse) document.getElementById('topbarParoisse').textContent = appConfig.nom_paroisse.toUpperCase();
   renderSidebar();
   navigateTo('accueil');
+  demarrerSuiviTempsReel();
 }
 
 function roleLabel(r){
   return {createur:'Créateur', responsable:'Responsable', secretariat:'Secrétariat', animateur:'Animateur', aumonier:'Aumônier'}[r] || r;
+}
+
+/* ============================================================
+   PRÉSENCE EN LIGNE & NOTIFICATIONS DE MESSAGES
+   ============================================================ */
+let presenceCache = [];
+let notificationsCache = [];
+let suiviTempsReelInterval = null;
+const SEUIL_EN_LIGNE_MS = 45000; // considéré "en ligne" si vu il y a moins de 45s
+const FREQUENCE_SUIVI_MS = 15000; // vérifie toutes les 15s
+
+function demarrerSuiviTempsReel(){
+  if(!sb) return;
+  arreterSuiviTempsReel();
+  const cycle = async ()=>{
+    await majPresence();
+    await chargerPresence();
+    await chargerNotifications();
+  };
+  cycle();
+  suiviTempsReelInterval = setInterval(cycle, FREQUENCE_SUIVI_MS);
+}
+
+function arreterSuiviTempsReel(){
+  if(suiviTempsReelInterval){ clearInterval(suiviTempsReelInterval); suiviTempsReelInterval = null; }
+}
+
+async function majPresence(){
+  if(!sb || !currentUser) return;
+  try{
+    await sb.from('catechese_presence').upsert({nom: currentUser.nom, derniere_connexion: new Date().toISOString()});
+  }catch(e){ console.error(e); }
+}
+
+async function chargerPresence(){
+  if(!sb) return;
+  try{
+    const seuil = new Date(Date.now() - SEUIL_EN_LIGNE_MS).toISOString();
+    const {data} = await sb.from('catechese_presence').select('nom').gte('derniere_connexion', seuil);
+    presenceCache = (data||[]).map(p=>p.nom);
+  }catch(e){ console.error(e); presenceCache = []; }
+  renderPresenceWidget();
+  // Si la messagerie est ouverte, rafraîchir les pastilles de présence des contacts
+  if(document.getElementById('messagerieBody') && typeof renderMessagerieLayout==='function' && messagerieContact===null){
+    renderMessagerieLayout();
+  }
+}
+
+function renderPresenceWidget(){
+  const btn = document.getElementById('presenceBtn');
+  if(!btn) return;
+  btn.textContent = `🟢 ${presenceCache.length} en ligne`;
+  const dropdown = document.getElementById('presenceDropdown');
+  if(!dropdown) return;
+  dropdown.innerHTML = presenceCache.length
+    ? presenceCache.map(nom=>`<div><span class="presenceDot"></span>${esc(nom)}</div>`).join('')
+    : `<div style="color:var(--gris)">Personne d'autre en ligne</div>`;
+}
+
+function togglePresenceDropdown(){
+  document.getElementById('presenceDropdown').classList.toggle('open');
+}
+
+async function chargerNotifications(){
+  if(!sb || !currentUser) return;
+  try{
+    const {data} = await sb.from('catechese_messages').select('expediteur_nom, contenu, type_message, created_at')
+      .eq('destinataire_nom', currentUser.nom).eq('lu', false).order('created_at', {ascending:false});
+    const messages = data || [];
+    // Regrouper par expéditeur : un seul aperçu par personne + compteur
+    const groupes = {};
+    messages.forEach(m=>{
+      if(!groupes[m.expediteur_nom]){
+        groupes[m.expediteur_nom] = {expediteur_nom: m.expediteur_nom, dernierMessage: m, count: 0};
+      }
+      groupes[m.expediteur_nom].count++;
+    });
+    notificationsCache = Object.values(groupes);
+  }catch(e){ console.error(e); notificationsCache = []; }
+  renderNotifPanel();
+  mettreAJourBadgeMessagerie();
+}
+
+function renderNotifPanel(){
+  const panel = document.getElementById('notifPanel');
+  if(!panel) return;
+  panel.innerHTML = notificationsCache.map(n=>{
+    const aperçu = n.dernierMessage.type_message !== 'texte' ? '📎 Fichier joint' : (n.dernierMessage.contenu||'');
+    return `
+    <div class="notifCard" onclick="ouvrirNotification('${esc(n.expediteur_nom)}')">
+      <b>${esc(n.expediteur_nom)}</b> ${n.count>1?`<span class="menuBadge" style="margin-left:6px">${n.count}</span>`:''}
+      <div class="notifPreview">${esc(aperçu)}</div>
+    </div>`;
+  }).join('');
+}
+
+function mettreAJourBadgeMessagerie(){
+  const totalNonLu = notificationsCache.reduce((s,n)=>s+n.count, 0);
+  const menuItem = document.getElementById('menu-messagerie');
+  if(!menuItem) return;
+  let badge = menuItem.querySelector('.menuBadge');
+  if(totalNonLu > 0){
+    if(!badge){
+      badge = document.createElement('span');
+      badge.className = 'menuBadge';
+      menuItem.appendChild(badge);
+    }
+    badge.textContent = totalNonLu;
+  } else if(badge){
+    badge.remove();
+  }
+}
+
+async function ouvrirNotification(nom){
+  document.getElementById('presenceDropdown')?.classList.remove('open');
+  navigateTo('messagerie');
+  await new Promise(r=>setTimeout(r, 150));
+  await ouvrirConversation(nom);
 }
 
 /* ============================================================
@@ -485,7 +649,10 @@ function renderSidebar(){
   });
 }
 
+let currentPageKey = 'accueil';
+
 function navigateTo(key){
+  currentPageKey = key;
   document.querySelectorAll('.menuItem').forEach(b=>b.classList.remove('active'));
   const btn = document.getElementById('menu-'+key);
   if(btn) btn.classList.add('active');
@@ -506,6 +673,14 @@ function navigateTo(key){
   if(renderers[key]) renderers[key]();
   else renderPlaceholder(item);
   if(window.innerWidth <= 700){ document.getElementById('sidebar').classList.remove('open'); }
+}
+
+async function actualiserPageCourante(){
+  const btn = document.getElementById('refreshBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '🔄 Actualisation…'; }
+  await navigateTo(currentPageKey);
+  if(btn){ btn.disabled = false; btn.textContent = '🔄 Actualiser'; }
+  showToast("Page actualisée ✓");
 }
 
 function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
@@ -1536,6 +1711,7 @@ let messagerieContact = null;
 let messagerieUsersCache = [];
 
 async function renderMessagerie(){
+  messagerieContact = null;
   document.getElementById('content').innerHTML = `
     <h2>💬 Messagerie</h2>
     <div class="breadcrumb">Discute avec les autres utilisateurs de l'application</div>
@@ -1548,9 +1724,15 @@ async function renderMessagerie(){
 }
 
 function renderMessagerieLayout(){
-  const contacts = messagerieUsersCache.map(nom=>`
-    <button class="smallBtn edit" style="display:block;width:100%;text-align:left;margin-bottom:6px" onclick="ouvrirConversation('${esc(nom)}')">${esc(nom)}</button>
-  `).join('') || `<div style="color:var(--gris);font-size:13px">Aucun autre utilisateur pour le moment</div>`;
+  const contacts = messagerieUsersCache.map(nom=>{
+    const enLigne = presenceCache.includes(nom);
+    const notif = notificationsCache.find(n=>n.expediteur_nom===nom);
+    return `
+    <button class="smallBtn edit" style="display:flex;align-items:center;width:100%;text-align:left;margin-bottom:6px" onclick="ouvrirConversation('${esc(nom)}')">
+      <span class="contactDot ${enLigne?'online':'offline'}"></span>${esc(nom)}
+      ${notif ? `<span class="menuBadge">${notif.count}</span>` : ''}
+    </button>`;
+  }).join('') || `<div style="color:var(--gris);font-size:13px">Aucun autre utilisateur pour le moment</div>`;
 
   document.getElementById('messagerieBody').innerHTML = `
     <div style="display:flex;gap:16px;align-items:flex-start">
@@ -1576,6 +1758,13 @@ async function chargerMessages(){
     .or(`and(expediteur_nom.eq.${currentUser.nom},destinataire_nom.eq.${messagerieContact}),and(expediteur_nom.eq.${messagerieContact},destinataire_nom.eq.${currentUser.nom})`)
     .order('created_at');
   const messages = data || [];
+
+  // Marquer comme lus les messages reçus de ce contact (la notification disparaît)
+  const idsNonLus = messages.filter(m=>m.destinataire_nom===currentUser.nom && !m.lu).map(m=>m.id);
+  if(idsNonLus.length){
+    await sb.from('catechese_messages').update({lu:true}).in('id', idsNonLus);
+    chargerNotifications();
+  }
 
   const bulles = messages.map(m=>{
     const moi = m.expediteur_nom === currentUser.nom;
