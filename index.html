@@ -461,7 +461,7 @@ function showToast(msg, isError=false){
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = 'toast show' + (isError ? ' error' : '');
-  setTimeout(()=> t.className='toast', 2500);
+  setTimeout(()=> t.className='toast', isError ? 6000 : 2500);
 }
 function esc(str){
   if(str===null||str===undefined) return '';
@@ -2063,7 +2063,9 @@ async function saveOptionParoisse(){
     const file = fileInput.files[0];
     const path = `paroisse-logo-${Date.now()}-${file.name}`;
     const {error:upErr} = await sb.storage.from('catechese-fichiers').upload(path, file, {upsert:true});
-    if(!upErr){
+    if(upErr){
+      showToast("Le logo n'a pas pu être envoyé : "+upErr.message+" (vérifie que le bucket 'catechese-fichiers' existe et est public)", true);
+    } else {
       const {data:pub} = sb.storage.from('catechese-fichiers').getPublicUrl(path);
       payload.logo_url = pub.publicUrl;
     }
