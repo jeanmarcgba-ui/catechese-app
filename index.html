@@ -299,8 +299,10 @@ create table if not exists catechese_catechumenes (
   photo_url text,
   pieces_jointes jsonb default '[]',
   class_id uuid references catechese_classes(id),
+  annee_catechese text,
   created_at timestamptz default now()
 );
+alter table catechese_catechumenes add column if not exists annee_catechese text;
 
 -- Parents (Phase 2)
 create table if not exists catechese_parents (
@@ -815,6 +817,10 @@ async function renderInscriptions(){
     <div class="breadcrumb">Liste des catéchumènes inscrits</div>
     <div id="inscriptionsBody"><div class="card"><div class="placeholder">Chargement…</div></div></div>`;
   await loadCatechumenes();
+  if(sb){
+    const {data} = await sb.from('catechese_classes').select('*').order('nom');
+    classesCache = data || [];
+  }
   if(!document.getElementById('inscriptionsBody')) return;
   renderInscriptionsList();
 }
@@ -828,10 +834,14 @@ async function loadCatechumenes(){
 }
 
 function renderInscriptionsList(){
-  const rows = catechumenesCache.map(c=>`
+  const rows = catechumenesCache.map(c=>{
+    const classe = classesCache.find(cl=>cl.id===c.class_id);
+    return `
     <tr>
       <td>${esc(c.nom)} ${esc(c.prenom)}</td>
       <td>${categorieLabel(c.categorie)}</td>
+      <td>${esc(c.annee_catechese||'—')}</td>
+      <td>${classe ? esc(classe.nom) : '<span style="color:var(--gris)">Non assigné</span>'}</td>
       <td>${c.statut==='nouveau' ? 'Nouveau' : 'Ancien'}</td>
       <td>${c.baptise ? '✅' : '—'}</td>
       <td>${esc(c.telephone||'')}</td>
@@ -839,7 +849,8 @@ function renderInscriptionsList(){
         <button class="smallBtn edit" onclick="openInscriptionForm('${c.id}')">Modifier</button>
         <button class="smallBtn del" onclick="deleteCatechumene('${c.id}')">Supprimer</button>
       </td>
-    </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--gris)">Aucun catéchumène inscrit</td></tr>`;
+    </tr>`;
+  }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--gris)">Aucun catéchumène inscrit</td></tr>`;
 
   document.getElementById('inscriptionsBody').innerHTML = `
     <div class="card">
@@ -848,7 +859,7 @@ function renderInscriptionsList(){
         <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openInscriptionForm(null)">+ Nouveau catéchumène</button>
       </div>
       <table style="margin-top:14px">
-        <thead><tr><th>Nom</th><th>Catégorie</th><th>Statut</th><th>Baptisé</th><th>Téléphone</th><th></th></tr></thead>
+        <thead><tr><th>Nom</th><th>Catégorie</th><th>Année</th><th>Classe</th><th>Statut</th><th>Baptisé</th><th>Téléphone</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -885,6 +896,13 @@ function openInscriptionForm(id){
           <select id="fStatut">
             <option value="nouveau" ${c?.statut==='nouveau'?'selected':''}>Nouveau catéchumène</option>
             <option value="ancien" ${c?.statut==='ancien'?'selected':''}>Ancien catéchumène</option>
+          </select>
+        </div>
+        <div class="field"><label>Année de catéchèse</label><input id="fAnnee" placeholder="ex: 2025-2026" value="${esc(c?.annee_catechese || appConfig?.annee_catechese || '')}"></div>
+        <div class="field"><label>Classe</label>
+          <select id="fClasse">
+            <option value="">— Non assigné —</option>
+            ${classesCache.map(cl=>`<option value="${cl.id}" ${c?.class_id===cl.id?'selected':''}>${esc(cl.nom)} (${categorieLabel(cl.categorie)})</option>`).join('')}
           </select>
         </div>
         <div class="field"><label>Photo du catéchumène</label><input id="fPhoto" type="file" accept="image/*"></div>
@@ -945,6 +963,8 @@ async function saveInscription(){
     baptise: document.getElementById('fBaptise').checked,
     date_bapteme: document.getElementById('fDateBapteme').value || null,
     lieu_bapteme: document.getElementById('fLieuBapteme').value.trim(),
+    annee_catechese: document.getElementById('fAnnee').value.trim(),
+    class_id: document.getElementById('fClasse').value || null,
   };
 
   const photoInput = document.getElementById('fPhoto');
