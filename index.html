@@ -419,6 +419,10 @@ create table if not exists catechese_messages (
   lu boolean default false,
   created_at timestamptz default now()
 );
+-- Si la table existait déjà avec l'ancienne structure (avant la refonte de la messagerie) :
+alter table catechese_messages add column if not exists expediteur_nom text;
+alter table catechese_messages add column if not exists destinataire_nom text;
+alter table catechese_messages add column if not exists lu boolean default false;
 
 -- Présence en ligne des utilisateurs
 create table if not exists catechese_presence (
