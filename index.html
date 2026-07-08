@@ -302,8 +302,10 @@ create table if not exists catechese_classes (
   categorie text not null check (categorie in ('enfants','jeunes','adultes')),
   effectif_max int default 30,
   animateur_id uuid,
+  annee_catechese text,
   created_at timestamptz default now()
 );
+alter table catechese_classes add column if not exists annee_catechese text;
 
 -- Catéchumènes (Phase 2)
 create table if not exists catechese_catechumenes (
@@ -355,8 +357,10 @@ create table if not exists catechese_animateurs (
   ancien_diocese text,
   photo_url text,
   class_id uuid references catechese_classes(id),
+  annee_catechese text,
   created_at timestamptz default now()
 );
+alter table catechese_animateurs add column if not exists annee_catechese text;
 
 -- Notes (Phase 3)
 create table if not exists catechese_notes (
@@ -494,6 +498,7 @@ const MENU_ITEMS = [
   {key:'messagerie', label:'Messagerie', icon:'💬', roles:['createur','responsable','secretariat','animateur','aumonier']},
   {key:'attestations', label:'Attestations', icon:'📄', roles:['createur','responsable','secretariat']},
   {key:'sauvegarde', label:'Sauvegarde des données', icon:'💾', roles:['createur','responsable','secretariat']},
+  {key:'archives', label:'Archives (années passées)', icon:'📚', roles:['createur','responsable','secretariat']},
   {key:'option', label:'Option', icon:'⚙️', roles:['createur']},
 ];
 
@@ -760,6 +765,7 @@ function navigateTo(key){
     messagerie: renderMessagerie,
     attestations: renderAttestations,
     sauvegarde: renderSauvegarde,
+    archives: renderArchives,
   };
   const item = MENU_ITEMS.find(m=>m.key===key);
   if(renderers[key]) renderers[key]();
@@ -914,7 +920,7 @@ async function renderInscriptions(){
   await loadCatechumenes();
   if(sb){
     const {data} = await sb.from('catechese_classes').select('*').order('nom');
-    classesCache = data || [];
+    classesCache = (data || []).filter(estAnneeActuelle);
   }
   if(!document.getElementById('inscriptionsBody')) return;
   renderInscriptionsList();
@@ -924,8 +930,14 @@ async function loadCatechumenes(){
   if(!sb){ catechumenesCache = []; return; }
   try{
     const {data} = await sb.from('catechese_catechumenes').select('*, catechese_parents(*)').order('created_at', {ascending:false});
-    catechumenesCache = data || [];
+    catechumenesCache = (data || []).filter(estAnneeActuelle);
   }catch(e){ console.error(e); catechumenesCache = []; }
+}
+
+function estAnneeActuelle(enregistrement){
+  const anneeActuelle = appConfig?.annee_catechese;
+  if(!anneeActuelle) return true; // pas d'année configurée : tout afficher
+  return !enregistrement.annee_catechese || enregistrement.annee_catechese === anneeActuelle;
 }
 
 function renderInscriptionsList(){
@@ -1247,6 +1259,7 @@ async function saveAnimateur(){
     const {error} = await sb.from('catechese_animateurs').update(payload).eq('id', animateurEditId);
     if(error){ showToast("Erreur : "+error.message, true); return; }
   } else {
+    payload.annee_catechese = appConfig?.annee_catechese || null;
     const {error} = await sb.from('catechese_animateurs').insert(payload);
     if(error){ showToast("Erreur : "+error.message, true); return; }
   }
@@ -1279,7 +1292,7 @@ async function renderRepartition(){
       sb.from('catechese_classes').select('*').order('nom'),
       sb.from('catechese_animateurs').select('*').order('nom'),
     ]);
-    classesCache = cls || [];
+    classesCache = (cls || []).filter(estAnneeActuelle);
     animateursCache = anim || [];
   }catch(e){
     console.error(e);
@@ -1419,7 +1432,7 @@ async function renderNotes(){
   if(!sb){ document.getElementById('notesBody').innerHTML = noSbCard(); return; }
   try{
     const {data} = await sb.from('catechese_classes').select('*').order('nom');
-    classesCache = data || [];
+    classesCache = (data || []).filter(estAnneeActuelle);
   }catch(e){
     console.error(e);
     const el = document.getElementById('notesBody');
@@ -1530,7 +1543,7 @@ async function renderResultats(){
   if(!sb){ document.getElementById('resultatsBody').innerHTML = noSbCard(); return; }
   try{
     const {data} = await sb.from('catechese_classes').select('*').order('nom');
-    classesCache = data || [];
+    classesCache = (data || []).filter(estAnneeActuelle);
   }catch(e){
     console.error(e);
     const el = document.getElementById('resultatsBody');
@@ -2513,6 +2526,78 @@ async function restaurerSauvegarde(){
 }
 
 /* ============================================================
+   MODULE ARCHIVES (ANNÉES PASSÉES)
+   ============================================================ */
+async function renderArchives(){
+  document.getElementById('content').innerHTML = `
+    <h2>📚 Archives (années passées)</h2>
+    <div class="breadcrumb">Consulte les données des années de catéchèse précédentes, sans les modifier</div>
+    <div id="archivesBody"><div class="card"><div class="placeholder">Chargement…</div></div></div>`;
+  if(!sb){ document.getElementById('archivesBody').innerHTML = noSbCard(); return; }
+
+  const anneeActuelle = appConfig?.annee_catechese || '';
+  try{
+    const {data} = await sb.from('catechese_catechumenes').select('annee_catechese');
+    const annees = [...new Set((data||[]).map(c=>c.annee_catechese).filter(a=>a && a!==anneeActuelle))].sort().reverse();
+    const el = document.getElementById('archivesBody');
+    if(!el) return;
+    if(!annees.length){
+      el.innerHTML = `<div class="card"><div class="placeholder">Aucune année archivée pour le moment. Les années précédentes apparaîtront ici automatiquement dès que tu changeras l'année de catéchèse dans Option.</div></div>`;
+      return;
+    }
+    el.innerHTML = annees.map(a=>`
+      <div class="card" style="cursor:pointer" onclick="renderArchiveAnnee('${esc(a)}')">
+        <h3 style="border:none;padding:0;margin:0">📅 Année ${esc(a)}</h3>
+        <div style="color:var(--gris);font-size:12px">Cliquer pour voir les catéchumènes, classes et paiements de cette année</div>
+      </div>`).join('');
+  }catch(e){
+    console.error(e);
+    const el = document.getElementById('archivesBody');
+    if(el) el.innerHTML = erreurCard();
+  }
+}
+
+async function renderArchiveAnnee(annee){
+  document.getElementById('archivesBody').innerHTML = `<div class="card"><div class="placeholder">Chargement…</div></div>`;
+  const [{data:catechumenes}, {data:classes}, {data:paiements}] = await Promise.all([
+    sb.from('catechese_catechumenes').select('*').eq('annee_catechese', annee).order('nom'),
+    sb.from('catechese_classes').select('*').eq('annee_catechese', annee).order('nom'),
+    sb.from('catechese_paiements').select('avance').eq('annee_catechese', annee),
+  ]);
+  const totalEncaisse = (paiements||[]).reduce((s,p)=>s+(p.avance||0),0);
+
+  const lignesCatechumenes = (catechumenes||[]).map(c=>{
+    const classe = (classes||[]).find(cl=>cl.id===c.class_id);
+    return `<tr><td>${esc(c.nom)} ${esc(c.prenom)}</td><td>${categorieLabel(c.categorie)}</td><td>${classe?esc(classe.nom):'—'}</td><td>${c.statut==='nouveau'?'Nouveau':'Ancien'}</td></tr>`;
+  }).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucun catéchumène pour cette année</td></tr>`;
+
+  const lignesClasses = (classes||[]).map(cl=>`<tr><td>${esc(cl.nom)}</td><td>${categorieLabel(cl.categorie)}</td></tr>`).join('')
+    || `<tr><td colspan="2" style="text-align:center;color:var(--gris)">Aucune classe pour cette année</td></tr>`;
+
+  document.getElementById('archivesBody').innerHTML = `
+    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderArchives()">← Retour aux archives</button>
+    <div class="card" style="text-align:center">
+      <div style="font-size:28px;font-weight:800;color:var(--bleu-nuit)">${(catechumenes||[]).length}</div>
+      <div style="color:var(--gris);font-size:13px">Catéchumènes inscrits en ${esc(annee)}</div>
+    </div>
+    <div class="card">
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">Catéchumènes — ${esc(annee)}</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableArchiveCatechumenes', 'Archives — Catéchumènes ${esc(annee)}')">Télécharger (PDF)</button>
+      </div>
+      <table id="tableArchiveCatechumenes" style="margin-top:14px"><thead><tr><th>Nom</th><th>Catégorie</th><th>Classe</th><th>Statut</th></tr></thead><tbody>${lignesCatechumenes}</tbody></table>
+    </div>
+    <div class="card">
+      <h3>Classes — ${esc(annee)}</h3>
+      <table style="margin-top:14px"><thead><tr><th>Nom</th><th>Catégorie</th></tr></thead><tbody>${lignesClasses}</tbody></table>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:28px;font-weight:800;color:var(--vert)">${totalEncaisse} FCFA</div>
+      <div style="color:var(--gris);font-size:13px">Total encaissé en ${esc(annee)}</div>
+    </div>`;
+}
+
+/* ============================================================
    MODULE OPTION (réservé au créateur)
    ============================================================ */
 let optionActiveTab = 'paroisse';
@@ -2692,7 +2777,7 @@ async function addClasse(){
   const categorie = document.getElementById('newClasseCategorie').value;
   const max = parseInt(document.getElementById('newClasseMax').value)||30;
   if(!nom){ showToast("Le nom de la classe est requis", true); return; }
-  const {error} = await sb.from('catechese_classes').insert({nom, categorie, effectif_max:max});
+  const {error} = await sb.from('catechese_classes').insert({nom, categorie, effectif_max:max, annee_catechese: appConfig?.annee_catechese || null});
   if(error){ showToast("Erreur : "+error.message, true); return; }
   showToast("Classe ajoutée ✓");
   renderOptionClasses();
