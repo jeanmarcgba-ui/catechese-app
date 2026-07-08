@@ -2419,12 +2419,46 @@ async function renderSauvegarde(){
           Choisis un fichier de sauvegarde précédemment téléchargé. Les données existantes portant le même identifiant seront mises à jour ;
           rien n'est supprimé automatiquement.
         </p>
-        <input type="file" id="fichierSauvegarde" accept="application/json">
-        <div style="margin-top:12px"><button class="btn ghost" style="width:auto;padding:11px 22px" onclick="restaurerSauvegarde()">Restaurer cette sauvegarde</button></div>
+        <input type="file" id="fichierSauvegarde" accept="application/json" onchange="previsualiserSauvegarde(event)">
+        <div id="apercuSauvegarde" style="display:none;margin-top:14px"></div>
+        <div style="margin-top:12px"><button class="btn ghost" style="width:auto;padding:11px 22px" id="btnRestaurer" onclick="restaurerSauvegarde()" disabled>Restaurer cette sauvegarde</button></div>
         <div id="sauvegardeStatut" style="margin-top:14px"></div>
       </div>
     </div>`;
   if(!sb){ document.getElementById('sauvegardeBody').innerHTML = noSbCard(); }
+}
+
+let sauvegardeAPrevisualiser = null;
+
+async function previsualiserSauvegarde(event){
+  const fichier = event.target.files[0];
+  const zone = document.getElementById('apercuSauvegarde');
+  const btn = document.getElementById('btnRestaurer');
+  sauvegardeAPrevisualiser = null;
+  btn.disabled = true;
+  if(!fichier){ zone.style.display='none'; zone.innerHTML=''; return; }
+
+  try{
+    const texte = await fichier.text();
+    const sauvegarde = JSON.parse(texte);
+    const lignesParTable = TABLES_SAUVEGARDE.map(table=>{
+      const n = sauvegarde.tables?.[table]?.length || 0;
+      return `<li>${table} : <b>${n}</b> ligne(s)</li>`;
+    }).join('');
+    const dateExport = sauvegarde.date_export ? new Date(sauvegarde.date_export).toLocaleString('fr-FR') : 'inconnue';
+    zone.style.display = 'block';
+    zone.innerHTML = `
+      <div class="card">
+        <h3>Aperçu de la sauvegarde</h3>
+        <p style="font-size:13px;color:var(--gris)">Fichier : ${esc(fichier.name)} · Créée le ${dateExport}</p>
+        <ul style="font-size:13px;line-height:1.8">${lignesParTable}</ul>
+      </div>`;
+    sauvegardeAPrevisualiser = sauvegarde;
+    btn.disabled = false;
+  }catch(e){
+    zone.style.display = 'block';
+    zone.innerHTML = `<div class="card"><div class="placeholder">Ce fichier n'est pas une sauvegarde valide.</div></div>`;
+  }
 }
 
 async function telechargerSauvegarde(){
@@ -2450,16 +2484,13 @@ async function telechargerSauvegarde(){
 
 async function restaurerSauvegarde(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
-  const input = document.getElementById('fichierSauvegarde');
-  const fichier = input.files[0];
-  if(!fichier){ showToast("Choisis un fichier de sauvegarde", true); return; }
+  if(!sauvegardeAPrevisualiser){ showToast("Choisis un fichier de sauvegarde valide", true); return; }
   if(!confirm("Restaurer cette sauvegarde ? Les données existantes portant le même identifiant seront écrasées.")) return;
 
   const statutEl = document.getElementById('sauvegardeStatut');
   statutEl.innerHTML = `<div class="placeholder">Restauration en cours…</div>`;
   try{
-    const texte = await fichier.text();
-    const sauvegarde = JSON.parse(texte);
+    const sauvegarde = sauvegardeAPrevisualiser;
     const resume = [];
     for(const table of TABLES_SAUVEGARDE){
       const lignes = sauvegarde.tables ? sauvegarde.tables[table] : null;
@@ -2467,11 +2498,17 @@ async function restaurerSauvegarde(){
       const {error} = await sb.from(table).upsert(lignes);
       resume.push(error ? `${table} : échec (${error.message})` : `${table} : ${lignes.length} ligne(s) restaurée(s) ✓`);
     }
-    statutEl.innerHTML = `<div class="card"><h3>Résultat de la restauration</h3><ul>${resume.map(r=>`<li>${esc(r)}</li>`).join('')}</ul></div>`;
     showToast("Restauration terminée ✓");
+    // Tout effacer après la restauration (fichier, aperçu, résumé)
+    document.getElementById('fichierSauvegarde').value = '';
+    document.getElementById('apercuSauvegarde').style.display = 'none';
+    document.getElementById('apercuSauvegarde').innerHTML = '';
+    document.getElementById('btnRestaurer').disabled = true;
+    sauvegardeAPrevisualiser = null;
+    statutEl.innerHTML = `<div class="card"><h3>Résultat de la dernière restauration</h3><ul>${resume.map(r=>`<li>${esc(r)}</li>`).join('')}</ul></div>`;
   }catch(e){
-    statutEl.innerHTML = `<div class="placeholder">Le fichier n'a pas pu être lu.</div>`;
-    showToast("Erreur : fichier invalide ("+e.message+")", true);
+    statutEl.innerHTML = `<div class="placeholder">Une erreur est survenue pendant la restauration.</div>`;
+    showToast("Erreur : "+e.message, true);
   }
 }
 
