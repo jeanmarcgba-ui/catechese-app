@@ -2608,7 +2608,10 @@ async function renderArchiveAnnee(annee){
     || `<tr><td colspan="3" style="text-align:center;color:var(--gris)">Aucune attestation pour cette année</td></tr>`;
 
   document.getElementById('archivesBody').innerHTML = `
-    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderArchives()">← Retour aux archives</button>
+    <div class="rowFlex" style="justify-content:space-between;margin-bottom:14px">
+      <button class="btn" style="width:auto;padding:8px 16px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderArchives()">← Retour aux archives</button>
+      ${currentUser.role==='createur' ? `<button class="btn" style="width:auto;padding:8px 16px;background:var(--rouge);color:#fff;border:1.5px solid #1a1a1a" onclick="supprimerAnneeArchive('${esc(annee)}')">🗑 Supprimer définitivement l'année ${esc(annee)}</button>` : ''}
+    </div>
 
     <div class="grid2">
       <div class="card" style="text-align:center">
@@ -2641,12 +2644,18 @@ async function renderArchiveAnnee(annee){
       <table id="tableArchiveCatechumenes" style="margin-top:14px"><thead><tr><th>Nom</th><th>Catégorie</th><th>Classe</th><th>Statut</th></tr></thead><tbody>${lignesCatechumenes}</tbody></table>
     </div>
     <div class="card">
-      <h3>Classes & animateurs — ${esc(annee)}</h3>
-      <table style="margin-top:14px"><thead><tr><th>Classe</th><th>Catégorie</th><th>Animateur</th></tr></thead><tbody>${lignesClasses}</tbody></table>
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">Classes & animateurs — ${esc(annee)}</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableArchiveClasses', 'Archives — Classes et animateurs ${esc(annee)}')">Télécharger (PDF)</button>
+      </div>
+      <table id="tableArchiveClasses" style="margin-top:14px"><thead><tr><th>Classe</th><th>Catégorie</th><th>Animateur</th></tr></thead><tbody>${lignesClasses}</tbody></table>
     </div>
     <div class="card">
-      <h3>Animateurs inscrits — ${esc(annee)}</h3>
-      <table style="margin-top:14px"><thead><tr><th>Nom</th><th>Téléphone</th></tr></thead><tbody>${lignesAnimateurs}</tbody></table>
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">Animateurs inscrits — ${esc(annee)}</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableArchiveAnimateurs', 'Archives — Animateurs inscrits ${esc(annee)}')">Télécharger (PDF)</button>
+      </div>
+      <table id="tableArchiveAnimateurs" style="margin-top:14px"><thead><tr><th>Nom</th><th>Téléphone</th></tr></thead><tbody>${lignesAnimateurs}</tbody></table>
     </div>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
@@ -2663,9 +2672,71 @@ async function renderArchiveAnnee(annee){
       <table id="tableArchiveDepenses" style="margin-top:14px"><thead><tr><th>Libellé</th><th>Montant</th><th>Date</th></tr></thead><tbody>${lignesDepenses}</tbody></table>
     </div>
     <div class="card">
-      <h3>Attestations émises — ${esc(annee)}</h3>
-      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Raison</th><th>Date</th></tr></thead><tbody>${lignesAttestations}</tbody></table>
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">Attestations émises — ${esc(annee)}</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableArchiveAttestations', 'Archives — Attestations émises ${esc(annee)}')">Télécharger (PDF)</button>
+      </div>
+      <table id="tableArchiveAttestations" style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Raison</th><th>Date</th></tr></thead><tbody>${lignesAttestations}</tbody></table>
     </div>`;
+}
+
+async function supprimerAnneeArchive(annee){
+  if(currentUser.role !== 'createur'){ showToast("Seul le créateur peut supprimer une année archivée", true); return; }
+  if(!confirm(`Supprimer DÉFINITIVEMENT toutes les données de l'année ${annee} ?\n\nCatéchumènes, classes, animateurs, paiements, dépenses et attestations de cette année seront perdus pour toujours. Cette action est irréversible.`)) return;
+  if(!confirm(`Dernière confirmation : es-tu absolument sûr de vouloir supprimer l'année ${annee} ?`)) return;
+
+  showToast("Suppression en cours…");
+
+  // On supprime les paiements/attestations en se basant sur les catéchumènes de cette année
+  // (et pas sur leur propre champ année, qui peut différer si mal renseigné) pour éviter
+  // les erreurs de clé étrangère.
+  const {data: catechumenesAnnee, error: erreurLecture} = await sb.from('catechese_catechumenes').select('id').eq('annee_catechese', annee);
+  if(erreurLecture){
+    showToast("Erreur : "+erreurLecture.message, true);
+    return;
+  }
+  const idsCatechumenes = (catechumenesAnnee||[]).map(c=>c.id);
+
+  const echecs = [];
+
+  if(idsCatechumenes.length){
+    const {error: e1} = await sb.from('catechese_paiements').delete().in('catechumene_id', idsCatechumenes);
+    if(e1) echecs.push(`Paiements : ${e1.message}`);
+    const {error: e2} = await sb.from('catechese_attestations').delete().in('catechumene_id', idsCatechumenes);
+    if(e2) echecs.push(`Attestations : ${e2.message}`);
+  }
+  // Filet de sécurité : au cas où des paiements/attestations orphelins porteraient quand même cette année
+  const {error: e1b} = await sb.from('catechese_paiements').delete().eq('annee_catechese', annee);
+  if(e1b) echecs.push(`Paiements (résiduels) : ${e1b.message}`);
+  const {error: e2b} = await sb.from('catechese_attestations').delete().eq('annee_catechese', annee);
+  if(e2b) echecs.push(`Attestations (résiduelles) : ${e2b.message}`);
+
+  // Ordre important pour respecter les dépendances entre tables
+  const etapes = [
+    ['catechese_catechumenes', 'Catéchumènes'], // supprime aussi notes/parents en cascade
+    ['catechese_classes', 'Classes'],
+    ['catechese_animateurs', 'Animateurs'],
+    ['catechese_depenses', 'Dépenses'],
+  ];
+  for(const [table, label] of etapes){
+    const {error} = await sb.from(table).delete().eq('annee_catechese', annee);
+    if(error) echecs.push(`${label} : ${error.message}`);
+  }
+
+  if(echecs.length){
+    showToast("Suppression incomplète — voir détails ci-dessous", true);
+    document.getElementById('archivesBody').innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--rouge)">La suppression a échoué sur certaines tables</h3>
+        <ul>${echecs.map(e=>`<li>${esc(e)}</li>`).join('')}</ul>
+        <p style="color:var(--gris);font-size:13px">Si tu vois une erreur de type "row-level security policy", relance le script SQL complet (Option → Script SQL) pour désactiver la sécurité RLS sur ces tables, puis réessaie.</p>
+        <button class="btn ghost" style="width:auto;padding:10px 18px;margin-top:10px" onclick="renderArchives()">← Retour aux archives</button>
+      </div>`;
+    return;
+  }
+
+  showToast("Année "+annee+" supprimée ✓");
+  renderArchives();
 }
 
 /* ============================================================
