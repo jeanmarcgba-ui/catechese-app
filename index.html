@@ -24,6 +24,7 @@
     --gris-fonce:#2b2d31;
     --gris-fonce-clair:#3a3d42;
     --bleu-gris:#51677a;
+    --orange-sombre:#7a3a10;
     --radius:14px;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -58,7 +59,7 @@
   .field{margin-bottom:14px;}
   .field label{display:block;font-size:12px;font-weight:600;color:var(--bleu-nuit);margin-bottom:6px;}
   .field input,.field select{
-    width:100%;padding:11px 12px;border:1.5px solid #dfe4ee;border-radius:9px;font-size:14px;background:#fbfcfe;
+    width:100%;padding:11px 12px;border:1.5px solid #1a1a1a;border-radius:9px;font-size:14px;background:#fbfcfe;
   }
   .field input:focus,.field select:focus{outline:none;border-color:var(--or);}
   .btn{
@@ -100,9 +101,9 @@
   .sidebar button.menuItem .dot{width:6px;height:6px;border-radius:50%;background:var(--or);opacity:0;}
   .sidebar button.menuItem.active .dot{opacity:1;}
 
-  .content{flex:1;padding:26px 30px;overflow-x:auto;}
-  .content h2{color:var(--bleu-nuit);font-size:20px;margin-bottom:6px;}
-  .content .breadcrumb{color:var(--gris);font-size:13px;margin-bottom:22px;}
+  .content{flex:1;padding:26px 30px;overflow-x:auto;background:var(--gris-fonce);}
+  .content h2{color:#fff;font-size:20px;margin-bottom:6px;}
+  .content .breadcrumb{color:#c3c6cc;font-size:13px;margin-bottom:22px;}
 
   .card{background:var(--blanc);border-radius:var(--radius);padding:22px;box-shadow:0 2px 10px rgba(15,36,71,.06);margin-bottom:20px;}
   .card h3{color:var(--bleu-nuit);font-size:15px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #eef1f7;}
@@ -170,6 +171,25 @@
   .notifCard b{color:var(--bleu-nuit);}
   .notifCard .notifPreview{color:var(--gris);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   @keyframes notifIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+
+  /* Impression : n'imprime que la zone dédiée, jamais le menu/la page entière */
+  #zoneImpression{display:none;}
+  @page{ margin: 14mm 12mm; }
+  @media print{
+    body *{visibility:hidden;}
+    #zoneImpression, #zoneImpression *{visibility:visible;}
+    #zoneImpression{
+      display:block !important;position:absolute;top:0;left:0;width:100%;padding:0;color:#000;
+    }
+    #zoneImpression table{width:100%;border-collapse:collapse;}
+    #zoneImpression thead{display:table-header-group;} /* répète l'en-tête du tableau sur chaque page */
+    #zoneImpression tr{page-break-inside:avoid;}
+    #zoneImpression th,#zoneImpression td{border:1px solid #999;padding:6px 10px;font-size:12px;text-align:left;}
+    #zoneImpression th{background:#eee;}
+    #zoneImpression button{display:none;}
+    #zoneImpression .noprint{display:none;}
+    #zoneImpression .pdfFooter{margin-top:24px;padding-top:10px;border-top:1px solid #999;font-size:11px;color:#555;text-align:center;}
+  }
 </style>
 </head>
 <body>
@@ -224,6 +244,7 @@
 </div>
 
 <div id="notifPanel"></div>
+<div id="zoneImpression"></div>
 
 <div class="toast" id="toast"></div>
 
@@ -392,7 +413,7 @@ create table if not exists catechese_messages (
   expediteur_nom text,
   destinataire_nom text,
   contenu text,
-  type_message text check (type_message in ('texte','photo','video','vocal')),
+  type_message text check (type_message in ('texte','photo','video','vocal','document')),
   media_url text,
   modifie boolean default false,
   lu boolean default false,
@@ -420,6 +441,11 @@ alter table catechese_depenses disable row level security;
 alter table catechese_attestations disable row level security;
 alter table catechese_actualites disable row level security;
 alter table catechese_messages disable row level security;
+
+-- Autorise le type 'document' (pièces jointes non-média : PDF, Word, etc.) si la table existait déjà
+alter table catechese_messages drop constraint if exists catechese_messages_type_message_check;
+alter table catechese_messages add constraint catechese_messages_type_message_check
+  check (type_message in ('texte','photo','video','vocal','document'));
 alter table catechese_presence disable row level security;
 
 -- Autorise l'application (clé anonyme) à envoyer des fichiers dans le bucket catechese-fichiers
@@ -476,6 +502,38 @@ function esc(str){
   if(str===null||str===undefined) return '';
   return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+/* ============================================================
+   IMPRESSION PDF : uniquement le tableau demandé, avec en-tête paroisse
+   ============================================================ */
+function synchroniserInputsAvantImpression(containerId){
+  const container = document.getElementById(containerId);
+  if(!container) return;
+  container.querySelectorAll('input').forEach(el=>{ el.setAttribute('value', el.value); });
+}
+
+function imprimerAvecEntete(sourceSelector, titre){
+  const el = document.querySelector(sourceSelector);
+  if(!el){ showToast("Rien à imprimer pour le moment", true); return; }
+  const c = appConfig || {};
+  const entete = `
+    <div style="display:flex;align-items:center;gap:18px;border-bottom:2px solid #0f2447;padding-bottom:14px;margin-bottom:18px">
+      ${c.logo_url ? `<img src="${esc(c.logo_url)}" style="width:85px;height:85px;border-radius:50%;object-fit:cover;border:2px solid #0f2447;flex-shrink:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;">` : ''}
+      <div>
+        <div style="font-weight:800;font-size:18px">${esc(c.nom_paroisse||'Paroisse non configurée')}</div>
+        <div style="font-size:12px;color:#333;margin-top:3px">
+          ${c.nom_diocese ? 'Diocèse de '+esc(c.nom_diocese)+' &nbsp;·&nbsp; ' : ''}
+          ${c.telephone ? 'Tél : '+esc(c.telephone)+' &nbsp;·&nbsp; ' : ''}
+          ${c.annee_catechese ? 'Année de catéchèse '+esc(c.annee_catechese) : ''}
+        </div>
+      </div>
+    </div>
+    <h2 style="margin-bottom:12px;font-size:17px">${esc(titre)}</h2>`;
+  const pied = `<div class="pdfFooter">${esc(c.nom_paroisse||'')} — Document généré le ${new Date().toLocaleDateString('fr-FR')}</div>`;
+  document.getElementById('zoneImpression').innerHTML = entete + el.outerHTML + pied;
+  window.print();
+}
+window.addEventListener('afterprint', ()=>{ document.getElementById('zoneImpression').innerHTML = ''; });
 
 /* ============================================================
    CHARGEMENT CONFIG PAROISSE (pour page login + topbar)
@@ -732,6 +790,10 @@ async function renderAccueil(){
       <div class="grid2" id="accueilStats">
         <div class="card"><div class="placeholder">Chargement des statistiques…</div></div>
       </div>
+      <div class="card" style="background:var(--orange-sombre)">
+        <h3 style="color:var(--beige);border-bottom-color:rgba(255,255,255,.2)">📰 Dernières actualités</h3>
+        <div id="accueilActualites"><div class="placeholder" style="color:var(--beige)">Chargement…</div></div>
+      </div>
       <div class="card">
         <h3>Accès rapide</h3>
         <div class="rowFlex" id="accueilShortcuts"></div>
@@ -747,6 +809,8 @@ async function renderAccueil(){
   if(!sb){
     document.getElementById('accueilStats').innerHTML = `
       <div class="card"><div class="placeholder">Connecte Supabase pour voir les statistiques (nombre de catéchumènes, animateurs, classes).</div></div>`;
+    const actuEl = document.getElementById('accueilActualites');
+    if(actuEl) actuEl.innerHTML = `<div class="placeholder">Connecte Supabase pour voir les publications.</div>`;
     return;
   }
 
@@ -789,6 +853,28 @@ async function renderAccueil(){
       <div style="font-size:32px;font-weight:800;color:var(--bleu-nuit)">${nbClasses}</div>
       <div style="color:var(--gris);font-size:13px">Classes de catéchèse créées</div>
     </div>`;
+
+  // Dernières actualités
+  const actuEl = document.getElementById('accueilActualites');
+  if(!actuEl) return;
+  try{
+    const {data:actus} = await sb.from('catechese_actualites').select('*').order('created_at', {ascending:false}).limit(5);
+    if(!document.getElementById('accueilActualites')) return;
+    if(!actus || !actus.length){
+      actuEl.innerHTML = `<div class="placeholder" style="color:var(--beige)">Aucune publication pour le moment</div>`;
+    } else {
+      actuEl.innerHTML = actus.map(a=>{
+        return `
+        <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.2);cursor:pointer" onclick="navigateTo('actualite')">
+          <div style="color:var(--beige);white-space:pre-wrap">${esc(a.contenu)}</div>
+          <div style="color:var(--beige);opacity:.75;font-size:11px;margin-top:4px">${esc(a.auteur)} · ${new Date(a.created_at).toLocaleString('fr-FR')}</div>
+        </div>`;
+      }).join('');
+    }
+  }catch(e){
+    console.error(e);
+    if(document.getElementById('accueilActualites')) actuEl.innerHTML = `<div class="placeholder">Impossible de charger les actualités</div>`;
+  }
 }
 
 
@@ -845,7 +931,7 @@ function renderInscriptionsList(){
       <td>${c.statut==='nouveau' ? 'Nouveau' : 'Ancien'}</td>
       <td>${c.baptise ? '✅' : '—'}</td>
       <td>${esc(c.telephone||'')}</td>
-      <td class="rowFlex">
+      <td class="rowFlex noprint">
         <button class="smallBtn edit" onclick="openInscriptionForm('${c.id}')">Modifier</button>
         <button class="smallBtn del" onclick="deleteCatechumene('${c.id}')">Supprimer</button>
       </td>
@@ -856,10 +942,13 @@ function renderInscriptionsList(){
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;margin:0;padding:0">Catéchumènes (${catechumenesCache.length})</h3>
-        <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openInscriptionForm(null)">+ Nouveau catéchumène</button>
+        <div class="rowFlex">
+          <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#inscriptionsBody table', 'Liste des catéchumènes inscrits')">Télécharger (PDF)</button>
+          <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openInscriptionForm(null)">+ Nouveau catéchumène</button>
+        </div>
       </div>
       <table style="margin-top:14px">
-        <thead><tr><th>Nom</th><th>Catégorie</th><th>Année</th><th>Classe</th><th>Statut</th><th>Baptisé</th><th>Téléphone</th><th></th></tr></thead>
+        <thead><tr><th>Nom</th><th>Catégorie</th><th>Année</th><th>Classe</th><th>Statut</th><th>Baptisé</th><th>Téléphone</th><th class="noprint"></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -1052,7 +1141,7 @@ function renderAnimateursList(){
       <td>${esc(a.profession||'')}</td>
       <td>${a.statut==='experimente' ? 'Expérimenté' : 'Nouveau'}</td>
       <td>${esc(a.telephone||'')}</td>
-      <td class="rowFlex">
+      <td class="rowFlex noprint">
         <button class="smallBtn edit" onclick="openAnimateurForm('${a.id}')">Modifier</button>
         <button class="smallBtn del" onclick="deleteAnimateur('${a.id}')">Supprimer</button>
       </td>
@@ -1062,10 +1151,13 @@ function renderAnimateursList(){
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;margin:0;padding:0">Animateurs (${animateursCache.length})</h3>
-        <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openAnimateurForm(null)">+ Nouvel animateur</button>
+        <div class="rowFlex">
+          <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#animateursBody table', 'Liste des personnes inscrites comme animateurs')">Télécharger (PDF)</button>
+          <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openAnimateurForm(null)">+ Nouvel animateur</button>
+        </div>
       </div>
       <table style="margin-top:14px">
-        <thead><tr><th>Nom</th><th>Profession</th><th>Statut</th><th>Téléphone</th><th></th></tr></thead>
+        <thead><tr><th>Nom</th><th>Profession</th><th>Statut</th><th>Téléphone</th><th class="noprint"></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -1238,11 +1330,11 @@ async function renderRepartitionClasse(classeId){
   const anim = animateursCache.find(a=>a.id===cls.animateur_id);
 
   const rows = (catechumenes||[]).map(c=>`
-    <tr><td>${esc(c.nom)} ${esc(c.prenom)}</td><td>${esc(c.telephone||'')}</td><td>${c.statut==='nouveau'?'Nouveau':'Ancien'}</td></tr>
-  `).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--gris)">Aucun catéchumène dans cette classe</td></tr>`;
+    <tr><td>${esc(c.nom)} ${esc(c.prenom)}</td><td>${esc(c.telephone||'')}</td><td>${c.statut==='nouveau'?'Nouveau':'Ancien'}</td><td>${esc(cls.nom)}</td></tr>
+  `).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucun catéchumène dans cette classe</td></tr>`;
 
   document.getElementById('repartitionBody').innerHTML = `
-    <button class="btn ghost" style="width:auto;padding:8px 16px;margin-bottom:14px" onclick="renderRepartitionListe()">← Retour aux classes</button>
+    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderRepartitionListe()">← Retour aux classes</button>
     <div class="card">
       <h3>${esc(cls.nom)} — ${categorieLabel(cls.categorie)}</h3>
       <div class="rowFlex" style="align-items:flex-end">
@@ -1250,7 +1342,6 @@ async function renderRepartitionClasse(classeId){
           <select id="repAnimateurSelect"><option value="">— Choisir —</option>${optionsAnimateurs}</select>
         </div>
         <button class="btn gold" style="width:auto;padding:11px 20px" onclick="assignerAnimateur('${classeId}')">Enregistrer</button>
-        <button class="btn ghost" style="width:auto;padding:11px 20px" onclick="window.print()">Télécharger (PDF)</button>
       </div>
       ${anim ? `<div class="rowFlex" style="margin-top:14px">
         ${anim.photo_url ? `<img src="${esc(anim.photo_url)}" style="width:60px;height:60px;border-radius:50%;object-fit:cover">` : ''}
@@ -1258,8 +1349,16 @@ async function renderRepartitionClasse(classeId){
       </div>` : ''}
     </div>
     <div class="card">
-      <h3>Liste des catéchumènes (${(catechumenes||[]).length})</h3>
-      <table><thead><tr><th>Nom</th><th>Téléphone</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">Liste des catéchumènes (${(catechumenes||[]).length})</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#printZoneClasse', 'Liste des catéchumènes — ${esc(cls.nom)}')">Télécharger (PDF)</button>
+      </div>
+      <div id="printZoneClasse">
+        <div style="text-align:right;font-weight:700;color:var(--bleu-nuit);margin-bottom:8px">
+          ${anim ? 'Animateur : ' + esc(anim.nom) + ' ' + esc(anim.prenom) : 'Aucun animateur assigné'}
+        </div>
+        <table id="tableCatechumenesClasse" style="margin-top:0"><thead><tr><th>Nom</th><th>Téléphone</th><th>Statut</th><th>Classe</th></tr></thead><tbody>${rows}</tbody></table>
+      </div>
     </div>`;
 }
 
@@ -1290,13 +1389,13 @@ async function renderListeTotale(categorie){
   }).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucune donnée</td></tr>`;
 
   document.getElementById('repartitionBody').innerHTML = `
-    <button class="btn ghost" style="width:auto;padding:8px 16px;margin-bottom:14px" onclick="renderRepartitionListe()">← Retour aux classes</button>
+    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderRepartitionListe()">← Retour aux classes</button>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;padding:0;margin:0">Liste totale — ${categorieLabel(categorie)}</h3>
-        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="window.print()">Télécharger (PDF)</button>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableListeTotale', 'Liste totale — ${esc(categorieLabel(categorie))}')">Télécharger (PDF)</button>
       </div>
-      <table style="margin-top:14px"><thead><tr><th>Classe</th><th>Catéchumène</th><th>Téléphone</th><th>Animateur</th></tr></thead><tbody>${rows}</tbody></table>
+      <table id="tableListeTotale" style="margin-top:14px"><thead><tr><th>Classe</th><th>Catéchumène</th><th>Téléphone</th><th>Animateur</th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
 
@@ -1340,6 +1439,11 @@ async function renderNotesClasse(classeId){
     const {data:notes} = await sb.from('catechese_notes').select('*').in('catechumene_id', ids);
     (notes||[]).forEach(n=>{ notesMap[n.catechumene_id] = n; });
   }
+  let anim = null;
+  if(cls.animateur_id){
+    const {data} = await sb.from('catechese_animateurs').select('nom,prenom').eq('id', cls.animateur_id).maybeSingle();
+    anim = data || null;
+  }
 
   const rows = (catechumenes||[]).map(c=>{
     const n = notesMap[c.id] || {};
@@ -1348,14 +1452,22 @@ async function renderNotesClasse(classeId){
   }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--gris)">Aucun catéchumène dans cette classe</td></tr>`;
 
   document.getElementById('notesBody').innerHTML = `
-    <button class="btn ghost" style="width:auto;padding:8px 16px;margin-bottom:14px" onclick="renderNotesListeClasses()">← Retour aux classes</button>
+    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderNotesListeClasses()">← Retour aux classes</button>
     <div class="card">
-      <h3>${esc(cls.nom)} — Notes et moyennes</h3>
-      <div style="overflow-x:auto">
-      <table>
-        <thead><tr><th>Catéchumène</th><th>N1</th><th>N2</th><th>N3</th><th>N4</th><th>N5</th><th>N6</th><th>Moyenne</th></tr></thead>
-        <tbody id="notesTableBody">${rows}</tbody>
-      </table>
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">${esc(cls.nom)} — Notes et moyennes</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="synchroniserInputsAvantImpression('printZoneNotes');imprimerAvecEntete('#printZoneNotes', 'Notes et moyennes — ${esc(cls.nom)}')">Télécharger (PDF)</button>
+      </div>
+      <div id="printZoneNotes">
+        <div style="text-align:right;font-weight:700;color:var(--bleu-nuit);margin-bottom:8px">
+          ${anim ? 'Animateur : ' + esc(anim.nom) + ' ' + esc(anim.prenom) : 'Aucun animateur assigné'}
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Catéchumène</th><th>N1</th><th>N2</th><th>N3</th><th>N4</th><th>N5</th><th>N6</th><th>Moyenne</th></tr></thead>
+          <tbody id="notesTableBody">${rows}</tbody>
+        </table>
+        </div>
       </div>
       <div style="margin-top:16px"><button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerNotes('${classeId}')">Enregistrer toutes les notes</button></div>
     </div>`;
@@ -1438,6 +1550,11 @@ async function renderResultatsClasse(classeId){
     const {data:notes} = await sb.from('catechese_notes').select('*').in('catechumene_id', ids);
     (notes||[]).forEach(n=>{ notesMap[n.catechumene_id] = n; });
   }
+  let anim = null;
+  if(cls.animateur_id){
+    const {data} = await sb.from('catechese_animateurs').select('nom,prenom').eq('id', cls.animateur_id).maybeSingle();
+    anim = data || null;
+  }
 
   const rows = (catechumenes||[]).map(c=>{
     const n = notesMap[c.id];
@@ -1452,13 +1569,18 @@ async function renderResultatsClasse(classeId){
   }).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--gris)">Aucun catéchumène dans cette classe</td></tr>`;
 
   document.getElementById('resultatsBody').innerHTML = `
-    <button class="btn ghost" style="width:auto;padding:8px 16px;margin-bottom:14px" onclick="renderResultatsListeClasses()">← Retour aux classes</button>
+    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderResultatsListeClasses()">← Retour aux classes</button>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;padding:0;margin:0">${esc(cls.nom)} — Résultats</h3>
-        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="window.print()">Télécharger (PDF)</button>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#printZoneResultats', 'Résultats — ${esc(cls.nom)}')">Télécharger (PDF)</button>
       </div>
-      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Moyenne</th><th>Résultat</th></tr></thead><tbody>${rows}</tbody></table>
+      <div id="printZoneResultats">
+        <div style="text-align:right;font-weight:700;color:var(--bleu-nuit);margin-bottom:8px">
+          ${anim ? 'Animateur : ' + esc(anim.nom) + ' ' + esc(anim.prenom) : 'Aucun animateur assigné'}
+        </div>
+        <table id="tableResultatsClasse"><thead><tr><th>Catéchumène</th><th>Moyenne</th><th>Résultat</th></tr></thead><tbody>${rows}</tbody></table>
+      </div>
     </div>`;
 }
 
@@ -1511,7 +1633,9 @@ function renderComptaPaiement(){
         <div class="field"><label>Année de catéchèse</label><input value="${esc(appConfig?.annee_catechese||'')}" disabled></div>
         <div class="field"><label>Contact des parents</label><input id="payContactParents" disabled></div>
         <div class="field"><label>Déjà payé</label><input id="payDejaPaye" disabled value="0 FCFA"></div>
-        <div class="field"><label>Montant total (FCFA)</label><input id="payMontantTotal" type="number" value="${appConfig?.montant_inscription||0}" oninput="recalculerReste()"></div>
+        <div class="field"><label>Montant total (FCFA)</label><input id="payMontantTotal" type="number" value="${appConfig?.montant_inscription||0}" oninput="recalculerReste()" ${appConfig?.montant_inscription ? 'disabled' : ''}>
+          ${appConfig?.montant_inscription ? '<div style="font-size:11px;color:var(--gris);margin-top:4px">Montant fixé dans Option → Infos paroisse</div>' : ''}
+        </div>
         <div class="field"><label>Avance (ce paiement)</label><input id="payAvance" type="number" value="0" oninput="recalculerReste()"></div>
         <div class="field"><label>Reste à payer</label><input id="payReste" disabled></div>
         <div class="field"><label>Type de paiement</label>
@@ -1581,16 +1705,73 @@ async function renderComptaHistorique(){
       <td>${p.avance} FCFA</td>
       <td>${p.reste} FCFA</td>
       <td>${esc(p.type_paiement||'')}</td>
-    </tr>`).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--gris)">Aucun paiement enregistré</td></tr>`;
+      <td class="noprint rowFlex">
+        <button class="smallBtn edit" onclick="ouvrirEditionPaiement('${p.id}')">Modifier</button>
+        <button class="smallBtn del" onclick="supprimerPaiement('${p.id}')">Supprimer</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--gris)">Aucun paiement enregistré</td></tr>`;
 
   document.getElementById('comptaTabContent').innerHTML = `
+    <div id="editionPaiementZone"></div>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;padding:0;margin:0">Historique des paiements</h3>
-        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="window.print()">Télécharger (PDF)</button>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#comptaTabContent table', 'Historique des paiements')">Télécharger (PDF)</button>
       </div>
-      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th></tr></thead><tbody>${rows}</tbody></table>
+      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th><th class="noprint"></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
+}
+
+function ouvrirEditionPaiement(id){
+  const p = paiementsCache.find(x=>x.id===id);
+  if(!p) return;
+  document.getElementById('editionPaiementZone').innerHTML = `
+    <div class="card">
+      <h3>Modifier le paiement — ${esc(p.catechese_catechumenes?.nom||'')} ${esc(p.catechese_catechumenes?.prenom||'')}</h3>
+      <div class="grid2">
+        <div class="field"><label>Montant total (FCFA)</label><input id="editMontantTotal" type="number" value="${p.montant_total}"></div>
+        <div class="field"><label>Montant payé (ce paiement)</label><input id="editAvance" type="number" value="${p.avance}"></div>
+        <div class="field"><label>Type de paiement</label>
+          <select id="editType">
+            <option ${p.type_paiement==='Espèces'?'selected':''}>Espèces</option>
+            <option ${p.type_paiement==='Mobile Money'?'selected':''}>Mobile Money</option>
+            <option ${p.type_paiement==='Chèque'?'selected':''}>Chèque</option>
+            <option ${p.type_paiement==='Virement'?'selected':''}>Virement</option>
+          </select>
+        </div>
+        <div class="field"><label>Date de paiement</label><input id="editDate" type="date" value="${p.date_paiement||''}"></div>
+      </div>
+      <div class="rowFlex">
+        <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionPaiement('${p.id}')">Enregistrer les modifications</button>
+        <button class="btn ghost" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionPaiementZone').innerHTML=''">Annuler</button>
+      </div>
+    </div>`;
+}
+
+async function enregistrerEditionPaiement(id){
+  if(!sb) return;
+  const montant_total = parseFloat(document.getElementById('editMontantTotal').value)||0;
+  const avance = parseFloat(document.getElementById('editAvance').value)||0;
+  const payload = {
+    montant_total, avance,
+    reste: montant_total - avance,
+    type_paiement: document.getElementById('editType').value,
+    date_paiement: document.getElementById('editDate').value,
+  };
+  const {error} = await sb.from('catechese_paiements').update(payload).eq('id', id);
+  if(error){ showToast("Erreur : "+error.message, true); return; }
+  showToast("Paiement modifié ✓");
+  document.getElementById('editionPaiementZone').innerHTML = '';
+  renderComptaHistorique();
+}
+
+async function supprimerPaiement(id){
+  if(!sb) return;
+  if(!confirm("Supprimer ce paiement ? Cette action est définitive.")) return;
+  const {error} = await sb.from('catechese_paiements').delete().eq('id', id);
+  if(error){ showToast("Erreur : "+error.message, true); return; }
+  showToast("Paiement supprimé");
+  renderComptaHistorique();
 }
 
 async function renderComptaDepenses(){
@@ -1599,7 +1780,7 @@ async function renderComptaDepenses(){
   depensesCache = data || [];
   const rows = depensesCache.map(d=>`
     <tr><td>${esc(d.libelle)}</td><td>${d.montant} FCFA</td><td>${d.date_depense||''}</td>
-    <td><button class="smallBtn del" onclick="supprimerDepense('${d.id}')">Supprimer</button></td></tr>`).join('')
+    <td class="noprint"><button class="smallBtn del" onclick="supprimerDepense('${d.id}')">Supprimer</button></td></tr>`).join('')
     || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucune dépense enregistrée</td></tr>`;
 
   document.getElementById('comptaTabContent').innerHTML = `
@@ -1613,8 +1794,11 @@ async function renderComptaDepenses(){
       <button class="btn gold" style="width:auto;padding:11px 22px" onclick="ajouterDepense()">Ajouter</button>
     </div>
     <div class="card">
-      <h3>Dépenses (${depensesCache.length})</h3>
-      <table><thead><tr><th>Libellé</th><th>Montant</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">Dépenses (${depensesCache.length})</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableDepenses', 'Historique des dépenses')">Télécharger (PDF)</button>
+      </div>
+      <table id="tableDepenses" style="margin-top:14px"><thead><tr><th>Libellé</th><th>Montant</th><th>Date</th><th class="noprint"></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
 
@@ -1688,7 +1872,7 @@ async function chargerActualites(){
   const formPublication = peutPublier() ? `
     <div class="card">
       <h3>Nouvelle publication</h3>
-      <textarea id="actuContenu" placeholder="Écris ton message ici…" style="width:100%;min-height:90px;padding:12px;border:1.5px solid #dfe4ee;border-radius:9px;font-family:inherit"></textarea>
+      <textarea id="actuContenu" placeholder="Écris ton message ici…" style="width:100%;min-height:90px;padding:12px;border:1.5px solid #1a1a1a;border-radius:9px;font-family:inherit"></textarea>
       <div style="margin-top:12px"><button class="btn gold" style="width:auto;padding:11px 22px" onclick="publierActualite()">Publier</button></div>
     </div>` : '';
 
@@ -1815,6 +1999,7 @@ async function chargerMessages(){
     if(m.type_message==='photo') media = `<img src="${esc(m.media_url)}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:6px">`;
     else if(m.type_message==='video') media = `<video src="${esc(m.media_url)}" controls style="max-width:220px;border-radius:8px;display:block;margin-bottom:6px"></video>`;
     else if(m.type_message==='vocal') media = `<audio src="${esc(m.media_url)}" controls style="display:block;margin-bottom:6px"></audio>`;
+    else if(m.type_message==='document') media = `<a href="${esc(m.media_url)}" target="_blank" style="display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.08);padding:8px 10px;border-radius:8px;margin-bottom:6px;color:inherit;text-decoration:none">📄 <span style="word-break:break-all;font-size:13px">${esc(nomFichierDepuisUrl(m.media_url))}</span></a>`;
     const actions = moi ? `<div class="rowFlex" style="margin-top:4px">
         <button class="smallBtn edit" style="padding:3px 8px;font-size:11px" onclick="modifierMessage('${m.id}')">Modifier</button>
         <button class="smallBtn del" style="padding:3px 8px;font-size:11px" onclick="supprimerMessage('${m.id}')">Supprimer</button>
@@ -1836,28 +2021,138 @@ async function chargerMessages(){
       <button class="smallBtn edit" onclick="chargerMessages()">🔄 Actualiser</button>
     </div>
     <div style="max-height:380px;overflow-y:auto;padding:6px" id="messagesListe">${bulles}</div>
+    <div id="apercuPieceJointe" style="display:none;margin-top:10px"></div>
+    <div id="statutEnregistrement" style="display:none;margin-top:10px;color:var(--rouge);font-weight:700"></div>
     <div class="rowFlex" style="margin-top:12px">
-      <input id="msgTexte" placeholder="Écris un message…" style="flex:1;padding:10px 12px;border:1.5px solid #dfe4ee;border-radius:9px">
-      <input type="file" id="msgFichier" accept="image/*,video/*,audio/*" style="width:150px">
+      <input id="msgTexte" placeholder="Écris un message…" style="flex:1;padding:10px 12px;border:1.5px solid #1a1a1a;border-radius:9px">
+      <input type="file" id="msgFichier" accept="*/*" style="display:none" onchange="gererSelectionFichier(event)">
+      <button class="btn ghost" style="width:auto;padding:10px 14px" title="Joindre un fichier (photo, vidéo, document, PDF...)" onclick="document.getElementById('msgFichier').click()">📎</button>
+      <button class="btn ghost" id="btnVocal" style="width:auto;padding:10px 14px" title="Message vocal" onclick="toggleEnregistrementVocal()">🎤</button>
       <button class="btn gold" style="width:auto;padding:10px 18px" onclick="envoyerMessage()">Envoyer</button>
     </div>`;
   const liste = document.getElementById('messagesListe');
   if(liste) liste.scrollTop = liste.scrollHeight;
 }
 
+/* ---------- Pièce jointe (tout type de fichier) avec aperçu avant envoi ---------- */
+let fichierSelectionne = null;
+
+function gererSelectionFichier(event){
+  const file = event.target.files[0];
+  fichierSelectionne = file || null;
+  blobVocalEnregistre = null; // un seul type de pièce jointe à la fois
+  afficherApercuPieceJointe();
+}
+
+function retirerPieceJointe(){
+  fichierSelectionne = null;
+  blobVocalEnregistre = null;
+  document.getElementById('msgFichier').value = '';
+  afficherApercuPieceJointe();
+}
+
+function afficherApercuPieceJointe(){
+  const zone = document.getElementById('apercuPieceJointe');
+  if(!zone) return;
+  if(!fichierSelectionne && !blobVocalEnregistre){ zone.style.display='none'; zone.innerHTML=''; return; }
+  zone.style.display = 'block';
+
+  if(blobVocalEnregistre){
+    const url = URL.createObjectURL(blobVocalEnregistre);
+    zone.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;background:#eef2fb;padding:8px 12px;border-radius:9px">
+        <audio src="${url}" controls style="flex:1"></audio>
+        <button class="smallBtn del" onclick="retirerPieceJointe()">✕ Retirer</button>
+      </div>`;
+    return;
+  }
+
+  const file = fichierSelectionne;
+  const url = URL.createObjectURL(file);
+  let contenuApercu = '';
+  if(file.type.startsWith('image/')){
+    contenuApercu = `<img src="${url}" style="width:60px;height:60px;object-fit:cover;border-radius:8px">`;
+  } else if(file.type.startsWith('video/')){
+    contenuApercu = `<video src="${url}" style="width:80px;height:60px;object-fit:cover;border-radius:8px"></video>`;
+  } else if(file.type.startsWith('audio/')){
+    contenuApercu = `<audio src="${url}" controls style="max-width:200px"></audio>`;
+  } else {
+    contenuApercu = `<span style="font-size:28px">📄</span>`;
+  }
+  zone.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;background:#eef2fb;padding:8px 12px;border-radius:9px">
+      ${contenuApercu}
+      <span style="flex:1;font-size:13px;word-break:break-all">${esc(file.name)}</span>
+      <button class="smallBtn del" onclick="retirerPieceJointe()">✕ Retirer</button>
+    </div>`;
+}
+
+/* ---------- Message vocal (enregistrement micro) ---------- */
+let blobVocalEnregistre = null;
+let enregistreurActuel = null;
+let segmentsEnregistrement = [];
+let chronoEnregistrement = null;
+let debutEnregistrement = null;
+
+async function toggleEnregistrementVocal(){
+  if(enregistreurActuel && enregistreurActuel.state === 'recording'){
+    enregistreurActuel.stop();
+    return;
+  }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    showToast("Ton navigateur ne permet pas l'enregistrement audio", true);
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    segmentsEnregistrement = [];
+    enregistreurActuel = new MediaRecorder(stream);
+    enregistreurActuel.ondataavailable = e=>{ if(e.data.size>0) segmentsEnregistrement.push(e.data); };
+    enregistreurActuel.onstop = ()=>{
+      blobVocalEnregistre = new Blob(segmentsEnregistrement, {type:'audio/webm'});
+      fichierSelectionne = null;
+      document.getElementById('msgFichier').value = '';
+      stream.getTracks().forEach(t=>t.stop());
+      clearInterval(chronoEnregistrement);
+      document.getElementById('statutEnregistrement').style.display = 'none';
+      document.getElementById('btnVocal').textContent = '🎤';
+      afficherApercuPieceJointe();
+    };
+    enregistreurActuel.start();
+    debutEnregistrement = Date.now();
+    document.getElementById('btnVocal').textContent = '⏹';
+    const statutEl = document.getElementById('statutEnregistrement');
+    statutEl.style.display = 'block';
+    chronoEnregistrement = setInterval(()=>{
+      const s = Math.floor((Date.now()-debutEnregistrement)/1000);
+      statutEl.textContent = `⏺ Enregistrement… ${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')} (clique sur ⏹ pour arrêter)`;
+    }, 300);
+  }catch(e){
+    showToast("Impossible d'accéder au micro : "+e.message, true);
+  }
+}
+
+function nomFichierDepuisUrl(url){
+  if(!url) return 'Document joint';
+  try{
+    const dernierSegment = url.split('/').pop();
+    return decodeURIComponent(dernierSegment.replace(/^message(-vocal)?-\d+-/, ''));
+  }catch(e){ return 'Document joint'; }
+}
+
 function typeFichierMessage(file){
   if(file.type.startsWith('image/')) return 'photo';
   if(file.type.startsWith('video/')) return 'video';
   if(file.type.startsWith('audio/')) return 'vocal';
-  return 'photo';
+  return 'document';
 }
 
 async function envoyerMessage(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const texte = document.getElementById('msgTexte').value.trim();
-  const fichierInput = document.getElementById('msgFichier');
-  const fichier = fichierInput.files[0];
-  if(!texte && !fichier){ showToast("Écris un message ou joins un fichier", true); return; }
+  const fichier = fichierSelectionne;
+  const vocal = blobVocalEnregistre;
+  if(!texte && !fichier && !vocal){ showToast("Écris un message, joins un fichier ou enregistre un vocal", true); return; }
 
   const payload = {
     expediteur_nom: currentUser.nom,
@@ -1865,14 +2160,23 @@ async function envoyerMessage(){
     contenu: texte || null,
     type_message: 'texte',
   };
-  if(fichier){
+
+  if(vocal){
+    const fichierVocal = new File([vocal], `vocal-${Date.now()}.webm`, {type:'audio/webm'});
+    const url = await uploadFile(fichierVocal, 'message-vocal');
+    if(url){ payload.media_url = url; payload.type_message = 'vocal'; }
+  } else if(fichier){
     const url = await uploadFile(fichier, 'message');
-    if(url){ payload.media_url = url; payload.type_message = typeFichierMessage(fichier); }
+    if(url){
+      payload.media_url = url;
+      payload.type_message = typeFichierMessage(fichier);
+    }
   }
+
   const {error} = await sb.from('catechese_messages').insert(payload);
   if(error){ showToast("Erreur : "+error.message, true); return; }
   document.getElementById('msgTexte').value = '';
-  fichierInput.value = '';
+  retirerPieceJointe();
   chargerMessages();
 }
 
@@ -1934,8 +2238,11 @@ function renderAttestationForm(){
     </div>
     <div id="attestationApercu"></div>
     <div class="card">
-      <h3>Attestations déjà émises</h3>
-      <div id="attestationsListe"><div class="placeholder">Chargement…</div></div>
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0">Attestations déjà émises</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#attestationsListe table', 'Attestations déjà émises')">Télécharger (PDF)</button>
+      </div>
+      <div id="attestationsListe" style="margin-top:14px"><div class="placeholder">Chargement…</div></div>
     </div>`;
   chargerAttestationsListe();
 }
