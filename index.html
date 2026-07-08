@@ -179,7 +179,7 @@
     body *{visibility:hidden;}
     #zoneImpression, #zoneImpression *{visibility:visible;}
     #zoneImpression{
-      display:block !important;position:absolute;top:0;left:0;width:100%;padding:0;color:#000;
+      display:block !important;position:absolute;top:0;left:0;width:100%;padding:0;padding-bottom:26px;color:#000;
     }
     #zoneImpression table{width:100%;border-collapse:collapse;}
     #zoneImpression thead{display:table-header-group;} /* répète l'en-tête du tableau sur chaque page */
@@ -188,7 +188,10 @@
     #zoneImpression th{background:#eee;}
     #zoneImpression button{display:none;}
     #zoneImpression .noprint{display:none;}
-    #zoneImpression .pdfFooter{margin-top:24px;padding-top:10px;border-top:1px solid #999;font-size:11px;color:#555;text-align:center;}
+    #zoneImpression .pdfFooter{
+      position:fixed;bottom:0;left:0;right:0;padding-top:8px;border-top:1px solid #999;
+      font-size:11px;color:#555;text-align:center;background:#fff;
+    }
   }
 </style>
 </head>
@@ -490,6 +493,7 @@ const MENU_ITEMS = [
   {key:'actualite', label:'Actualité', icon:'📰', roles:['createur','responsable','secretariat','animateur','aumonier']},
   {key:'messagerie', label:'Messagerie', icon:'💬', roles:['createur','responsable','secretariat','animateur','aumonier']},
   {key:'attestations', label:'Attestations', icon:'📄', roles:['createur','responsable','secretariat']},
+  {key:'sauvegarde', label:'Sauvegarde des données', icon:'💾', roles:['createur','responsable','secretariat']},
   {key:'option', label:'Option', icon:'⚙️', roles:['createur']},
 ];
 
@@ -532,7 +536,7 @@ function imprimerAvecEntete(sourceSelector, titre){
         </div>
       </div>
     </div>
-    <h2 style="margin-bottom:12px;font-size:17px">${esc(titre)}</h2>`;
+    ${titre ? `<h2 style="margin-bottom:12px;font-size:17px">${esc(titre)}</h2>` : ''}`;
   const pied = `<div class="pdfFooter">${esc(c.nom_paroisse||'')} — Document généré le ${new Date().toLocaleDateString('fr-FR')}</div>`;
   document.getElementById('zoneImpression').innerHTML = entete + el.outerHTML + pied;
   window.print();
@@ -755,6 +759,7 @@ function navigateTo(key){
     actualite: renderActualite,
     messagerie: renderMessagerie,
     attestations: renderAttestations,
+    sauvegarde: renderSauvegarde,
   };
   const item = MENU_ITEMS.find(m=>m.key===key);
   if(renderers[key]) renderers[key]();
@@ -2283,11 +2288,11 @@ async function genererAttestation(){
 function afficherApercuAttestation(c, att){
   document.getElementById('attestationApercu').innerHTML = `
     <div class="card" id="attestationImprimable" style="line-height:1.9">
-      <div style="text-align:right"><button class="btn ghost" style="width:auto;padding:8px 16px" onclick="window.print()">Télécharger (PDF)</button></div>
+      <div style="text-align:right"><button class="btn ghost" style="width:auto;padding:8px 16px" onclick="imprimerAvecEntete('#attestationImprimable', '')">Télécharger (PDF)</button></div>
       <p><b>Diocèse de :</b> ${esc(appConfig?.nom_diocese||'____________')}<br><b>Paroisse de :</b> ${esc(appConfig?.nom_paroisse||'____________')}</p>
-      <h3 style="text-align:center">ATTESTATION DE SUIVI DE LA CATÉCHÈSE</h3>
+      <h3 style="text-align:center;margin:26px 0">ATTESTATION DE SUIVI DE LA CATÉCHÈSE</h3>
       <p>Je soussigné(e), <b>${esc(att.nom_curé_responsable)}</b>, en ma qualité de <b>${esc(att.qualite)}</b> pour la paroisse de <b>${esc(appConfig?.nom_paroisse||'')}</b>,</p>
-      <p>Certifie que l'enfant / le jeune :</p>
+      <p>Certifie que l'enfant / le jeune / l'adulte :</p>
       <ul>
         <li><b>Nom :</b> ${esc(c?.nom||'')}</li>
         <li><b>Prénom :</b> ${esc(c?.prenom||'')}</li>
@@ -2296,20 +2301,178 @@ function afficherApercuAttestation(c, att){
       <p>A suivi avec assiduité et sérieux les rencontres de catéchisme durant l'année pastorale <b>${esc(appConfig?.annee_catechese||'')}</b>.</p>
       <p><b>Sacrements déjà reçus :</b> ${c?.baptise ? 'Baptême le '+(c.date_bapteme||'—')+' à '+esc(c.lieu_bapteme||'—') : 'Aucun renseigné'}</p>
       <p>Cette attestation est délivrée à la demande de l'intéressé(e) pour faire valoir ce que de droit, en vue de : <b>${esc(att.raison)}</b>.</p>
-      <p>Fait à <b>${esc(att.ville)}</b>, le <b>${att.date_delivrance}</b></p>
-      <p><b>Signature du responsable :</b> ${esc(att.nom_curé_responsable)}<br><i>(Accompagnée du tampon officiel de la paroisse)</i></p>
+      <p style="text-align:right">Fait à <b>${esc(att.ville)}</b>, le <b>${att.date_delivrance}</b></p>
+      <div style="margin-top:50px;text-align:center">
+        <p><b>Signature du responsable :</b></p>
+        <p style="margin-top:10px">${esc(att.nom_curé_responsable)}</p>
+      </div>
     </div>`;
 }
+
+let attestationsCache = [];
 
 async function chargerAttestationsListe(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const {data} = await sb.from('catechese_attestations').select('*, catechese_catechumenes(nom,prenom)').order('created_at', {ascending:false});
-  const rows = (data||[]).map(a=>`
-    <tr><td>${esc(a.catechese_catechumenes?.nom||'')} ${esc(a.catechese_catechumenes?.prenom||'')}</td><td>${esc(a.raison||'')}</td><td>${a.date_delivrance||''}</td></tr>
-  `).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--gris)">Aucune attestation émise</td></tr>`;
+  attestationsCache = data || [];
+  const rows = attestationsCache.map(a=>`
+    <tr style="cursor:pointer" onclick="voirAttestation('${a.id}')">
+      <td>${esc(a.catechese_catechumenes?.nom||'')} ${esc(a.catechese_catechumenes?.prenom||'')}</td>
+      <td>${esc(a.raison||'')}</td>
+      <td>${a.date_delivrance||''}</td>
+      <td class="noprint rowFlex" onclick="event.stopPropagation()">
+        <button class="smallBtn edit" onclick="ouvrirEditionAttestation('${a.id}')">Modifier</button>
+        <button class="smallBtn del" onclick="supprimerAttestation('${a.id}')">Supprimer</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucune attestation émise</td></tr>`;
   const el = document.getElementById('attestationsListe');
   if(!el) return;
-  el.innerHTML = `<table><thead><tr><th>Catéchumène</th><th>Raison</th><th>Date</th></tr></thead><tbody>${rows}</tbody></table>`;
+  el.innerHTML = `<div id="editionAttestationZone"></div><table><thead><tr><th>Catéchumène</th><th>Raison</th><th>Date</th><th class="noprint"></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function voirAttestation(id){
+  const a = attestationsCache.find(x=>x.id===id);
+  if(!a) return;
+  const c = catechumenesCache.find(x=>x.id===a.catechumene_id) || a.catechese_catechumenes;
+  afficherApercuAttestation(c, a);
+  document.getElementById('attestationApercu')?.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function ouvrirEditionAttestation(id){
+  const a = attestationsCache.find(x=>x.id===id);
+  if(!a) return;
+  document.getElementById('editionAttestationZone').innerHTML = `
+    <div class="card">
+      <h3>Modifier l'attestation — ${esc(a.catechese_catechumenes?.nom||'')} ${esc(a.catechese_catechumenes?.prenom||'')}</h3>
+      <div class="grid2">
+        <div class="field"><label>Nom du curé / responsable</label><input id="editAttResponsable" value="${esc(a.nom_curé_responsable||'')}"></div>
+        <div class="field"><label>Qualité</label>
+          <select id="editAttQualite">
+            <option value="Curé" ${a.qualite==='Curé'?'selected':''}>Curé</option>
+            <option value="Responsable de la catéchèse" ${a.qualite==='Responsable de la catéchèse'?'selected':''}>Responsable de la catéchèse</option>
+          </select>
+        </div>
+        <div class="field"><label>Raison</label>
+          <select id="editAttRaison">
+            ${['La Première Communion','La Profession de foi','Le sacrement de la Confirmation','Une inscription dans une nouvelle paroisse','Un établissement scolaire'].map(r=>`<option ${a.raison===r?'selected':''}>${r}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Ville</label><input id="editAttVille" value="${esc(a.ville||'')}"></div>
+        <div class="field"><label>Date</label><input id="editAttDate" type="date" value="${a.date_delivrance||''}"></div>
+      </div>
+      <div class="rowFlex">
+        <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionAttestation('${a.id}')">Enregistrer les modifications</button>
+        <button class="btn ghost" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionAttestationZone').innerHTML=''">Annuler</button>
+      </div>
+    </div>`;
+}
+
+async function enregistrerEditionAttestation(id){
+  if(!sb) return;
+  const payload = {
+    nom_curé_responsable: document.getElementById('editAttResponsable').value.trim(),
+    qualite: document.getElementById('editAttQualite').value,
+    raison: document.getElementById('editAttRaison').value,
+    ville: document.getElementById('editAttVille').value.trim(),
+    date_delivrance: document.getElementById('editAttDate').value,
+  };
+  const {error} = await sb.from('catechese_attestations').update(payload).eq('id', id);
+  if(error){ showToast("Erreur : "+error.message, true); return; }
+  showToast("Attestation modifiée ✓");
+  chargerAttestationsListe();
+}
+
+async function supprimerAttestation(id){
+  if(!sb) return;
+  if(!confirm("Supprimer cette attestation ? Cette action est définitive.")) return;
+  const {error} = await sb.from('catechese_attestations').delete().eq('id', id);
+  if(error){ showToast("Erreur : "+error.message, true); return; }
+  showToast("Attestation supprimée");
+  chargerAttestationsListe();
+}
+
+/* ============================================================
+   MODULE SAUVEGARDE ET RESTAURATION DES DONNÉES
+   ============================================================ */
+const TABLES_SAUVEGARDE = [
+  'catechese_app_config','catechese_app_users','catechese_classes','catechese_catechumenes',
+  'catechese_parents','catechese_animateurs','catechese_notes','catechese_paiements',
+  'catechese_depenses','catechese_attestations','catechese_actualites','catechese_messages','catechese_presence'
+];
+
+async function renderSauvegarde(){
+  document.getElementById('content').innerHTML = `
+    <h2>💾 Sauvegarde des données</h2>
+    <div class="breadcrumb">Protège les données de l'application en cas de perte, et restaure-les si besoin</div>
+    <div id="sauvegardeBody">
+      <div class="card">
+        <h3>Télécharger une sauvegarde</h3>
+        <p style="color:var(--gris);font-size:13px">
+          Crée un fichier contenant toutes les données actuelles de l'application (catéchumènes, animateurs, paiements, messages, etc.).
+          Garde ce fichier en lieu sûr (ordinateur, clé USB, Google Drive…).
+        </p>
+        <button class="btn gold" style="width:auto;padding:11px 22px" onclick="telechargerSauvegarde()">Télécharger la sauvegarde (.json)</button>
+      </div>
+      <div class="card">
+        <h3>Restaurer une sauvegarde</h3>
+        <p style="color:var(--gris);font-size:13px">
+          Choisis un fichier de sauvegarde précédemment téléchargé. Les données existantes portant le même identifiant seront mises à jour ;
+          rien n'est supprimé automatiquement.
+        </p>
+        <input type="file" id="fichierSauvegarde" accept="application/json">
+        <div style="margin-top:12px"><button class="btn ghost" style="width:auto;padding:11px 22px" onclick="restaurerSauvegarde()">Restaurer cette sauvegarde</button></div>
+        <div id="sauvegardeStatut" style="margin-top:14px"></div>
+      </div>
+    </div>`;
+  if(!sb){ document.getElementById('sauvegardeBody').innerHTML = noSbCard(); }
+}
+
+async function telechargerSauvegarde(){
+  if(!sb){ showToast("Supabase non configuré", true); return; }
+  showToast("Préparation de la sauvegarde…");
+  const sauvegarde = {date_export: new Date().toISOString(), tables:{}};
+  for(const table of TABLES_SAUVEGARDE){
+    const {data, error} = await sb.from(table).select('*');
+    if(error){ showToast("Erreur sur "+table+" : "+error.message, true); return; }
+    sauvegarde.tables[table] = data || [];
+  }
+  const blob = new Blob([JSON.stringify(sauvegarde, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `sauvegarde-catechese-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast("Sauvegarde téléchargée ✓");
+}
+
+async function restaurerSauvegarde(){
+  if(!sb){ showToast("Supabase non configuré", true); return; }
+  const input = document.getElementById('fichierSauvegarde');
+  const fichier = input.files[0];
+  if(!fichier){ showToast("Choisis un fichier de sauvegarde", true); return; }
+  if(!confirm("Restaurer cette sauvegarde ? Les données existantes portant le même identifiant seront écrasées.")) return;
+
+  const statutEl = document.getElementById('sauvegardeStatut');
+  statutEl.innerHTML = `<div class="placeholder">Restauration en cours…</div>`;
+  try{
+    const texte = await fichier.text();
+    const sauvegarde = JSON.parse(texte);
+    const resume = [];
+    for(const table of TABLES_SAUVEGARDE){
+      const lignes = sauvegarde.tables ? sauvegarde.tables[table] : null;
+      if(!lignes || !lignes.length){ resume.push(`${table} : aucune donnée dans la sauvegarde`); continue; }
+      const {error} = await sb.from(table).upsert(lignes);
+      resume.push(error ? `${table} : échec (${error.message})` : `${table} : ${lignes.length} ligne(s) restaurée(s) ✓`);
+    }
+    statutEl.innerHTML = `<div class="card"><h3>Résultat de la restauration</h3><ul>${resume.map(r=>`<li>${esc(r)}</li>`).join('')}</ul></div>`;
+    showToast("Restauration terminée ✓");
+  }catch(e){
+    statutEl.innerHTML = `<div class="placeholder">Le fichier n'a pas pu être lu.</div>`;
+    showToast("Erreur : fichier invalide ("+e.message+")", true);
+  }
 }
 
 /* ============================================================
@@ -2517,10 +2680,14 @@ async function renderOptionUtilisateurs(){
       <td>${esc(u.nom)}</td>
       <td>${esc(u.nom_utilisateur||'—')}</td>
       <td><span class="badge ${u.role}">${roleLabel(u.role)}</span></td>
-      <td><button class="smallBtn del" onclick="deleteUser('${u.id}')">Supprimer</button></td>
+      <td class="rowFlex">
+        <button class="smallBtn edit" onclick="ouvrirEditionUtilisateur('${u.id}')">Modifier</button>
+        <button class="smallBtn del" onclick="deleteUser('${u.id}')">Supprimer</button>
+      </td>
     </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucun utilisateur ajouté (en dehors du créateur)</td></tr>`;
 
   document.getElementById('optionTabContent').innerHTML = `
+    <div id="editionUtilisateurZone"></div>
     <div class="card">
       <h3>Ajouter un utilisateur</h3>
       <div class="grid2">
@@ -2548,6 +2715,54 @@ async function renderOptionUtilisateurs(){
         </tbody>
       </table>
     </div>`;
+}
+
+function ouvrirEditionUtilisateur(id){
+  const u = usersCache.find(x=>x.id===id);
+  if(!u) return;
+  document.getElementById('editionUtilisateurZone').innerHTML = `
+    <div class="card">
+      <h3>Modifier l'utilisateur — ${esc(u.nom)}</h3>
+      <div class="grid2">
+        <div class="field"><label>Nom complet</label><input id="editUserNom" value="${esc(u.nom)}"></div>
+        <div class="field"><label>Nom d'utilisateur</label><input id="editUserLogin" value="${esc(u.nom_utilisateur||'')}"></div>
+        <div class="field"><label>Nouveau mot de passe (laisser vide pour ne pas changer)</label><input id="editUserPass" type="text" placeholder="••••••••"></div>
+        <div class="field"><label>Rôle</label>
+          <select id="editUserRole">
+            <option value="responsable" ${u.role==='responsable'?'selected':''}>Responsable catéchèse</option>
+            <option value="secretariat" ${u.role==='secretariat'?'selected':''}>Secrétariat</option>
+            <option value="animateur" ${u.role==='animateur'?'selected':''}>Animateur</option>
+            <option value="aumonier" ${u.role==='aumonier'?'selected':''}>Aumônier</option>
+          </select>
+        </div>
+      </div>
+      <div class="rowFlex">
+        <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionUtilisateur('${u.id}')">Enregistrer les modifications</button>
+        <button class="btn ghost" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionUtilisateurZone').innerHTML=''">Annuler</button>
+      </div>
+    </div>`;
+}
+
+async function enregistrerEditionUtilisateur(id){
+  if(!sb) return;
+  const nom = document.getElementById('editUserNom').value.trim();
+  const nom_utilisateur = document.getElementById('editUserLogin').value.trim();
+  const nouveauPass = document.getElementById('editUserPass').value;
+  if(!nom || !nom_utilisateur){ showToast("Nom complet et nom d'utilisateur requis", true); return; }
+  const payload = {
+    nom, nom_utilisateur,
+    role: document.getElementById('editUserRole').value,
+  };
+  if(nouveauPass) payload.mot_de_passe = nouveauPass;
+  const {error} = await sb.from('catechese_app_users').update(payload).eq('id', id);
+  if(error){
+    if(error.message.includes('duplicate') || error.code==='23505') showToast("Ce nom d'utilisateur est déjà pris", true);
+    else showToast("Erreur : "+error.message, true);
+    return;
+  }
+  showToast("Utilisateur modifié ✓");
+  document.getElementById('editionUtilisateurZone').innerHTML = '';
+  renderOptionUtilisateurs();
 }
 
 function renderOptionSql(){
