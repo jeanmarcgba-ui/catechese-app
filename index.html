@@ -96,10 +96,10 @@
     .topbar button{font-size:11px;padding:5px 8px;}
   }
 
-  .layout{display:flex;min-height:calc(100vh - 58px);}
+  .layout{display:flex;min-height:calc(100vh - var(--topbar-h, 58px));}
   .sidebar{
     width:250px;background:var(--vert-fonce);border-right:2px solid #1a1a1a;padding:16px 0;flex-shrink:0;
-    position:sticky;top:58px;height:calc(100vh - 58px);overflow-y:auto;
+    position:sticky;top:var(--topbar-h, 58px);height:calc(100vh - var(--topbar-h, 58px));overflow-y:auto;
   }
   .sidebar button.menuItem{
     display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;
@@ -114,10 +114,10 @@
   .content h2{color:#fff;font-size:20px;margin-bottom:6px;}
   .content .breadcrumb{color:#c3c6cc;font-size:13px;margin-bottom:22px;}
 
-  .card{background:var(--blanc);border-radius:var(--radius);padding:22px;box-shadow:0 2px 10px rgba(15,36,71,.06);margin-bottom:20px;}
+  .card{background:var(--blanc);border-radius:var(--radius);padding:22px;box-shadow:0 2px 10px rgba(15,36,71,.06);margin-bottom:20px;overflow-x:auto;max-width:100%;}
   .card h3{color:var(--bleu-nuit);font-size:15px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #eef1f7;}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-  @media(max-width:700px){.grid2{grid-template-columns:1fr;} .sidebar{position:fixed;left:-260px;top:58px;bottom:0;transition:left .25s;z-index:15;box-shadow:4px 0 20px rgba(0,0,0,.15);} .sidebar.open{left:0;} .content{padding:18px;}}
+  @media(max-width:700px){.grid2{grid-template-columns:1fr;} .sidebar{position:fixed;left:-260px;top:var(--topbar-h, 58px);bottom:0;transition:left .25s;z-index:15;box-shadow:4px 0 20px rgba(0,0,0,.15);} .sidebar.open{left:0;} .content{padding:18px;}}
 
   table{width:100%;border-collapse:collapse;font-size:13.5px;}
   table th{text-align:left;background:#f4f6fb;color:var(--bleu-nuit);padding:10px 12px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;}
@@ -627,6 +627,7 @@ function enterApp(){
   renderSidebar();
   navigateTo('accueil');
   demarrerSuiviTempsReel();
+  setTimeout(ajusterHauteurTopbar, 50);
 }
 
 function roleLabel(r){
@@ -3098,12 +3099,21 @@ window.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('topbarLogo').src = APP_LOGO_B64;
   loadPublicConfig();
   mettreAJourBoutonMenu();
-  window.addEventListener('resize', mettreAJourBoutonMenu);
+  ajusterHauteurTopbar();
+  window.addEventListener('resize', ()=>{ mettreAJourBoutonMenu(); ajusterHauteurTopbar(); });
 });
 
 function mettreAJourBoutonMenu(){
   const btn = document.getElementById('burgerBtn');
   if(btn) btn.style.display = window.innerWidth <= 700 ? 'inline-block' : 'none';
+}
+
+function ajusterHauteurTopbar(){
+  const topbar = document.querySelector('.topbar');
+  if(!topbar) return;
+  // La barre du haut peut passer sur 2 lignes sur petit écran ; on mesure sa vraie hauteur
+  // pour que le menu latéral commence toujours juste en dessous, jamais caché derrière.
+  document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
 }
 </script>
 </body>
