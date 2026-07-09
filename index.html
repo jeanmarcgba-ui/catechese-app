@@ -117,7 +117,16 @@
   .card{background:var(--blanc);border-radius:var(--radius);padding:22px;box-shadow:0 2px 10px rgba(15,36,71,.06);margin-bottom:20px;overflow-x:auto;max-width:100%;}
   .card h3{color:var(--bleu-nuit);font-size:15px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #eef1f7;}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-  @media(max-width:700px){.grid2{grid-template-columns:1fr;} .sidebar{position:fixed;left:-260px;top:var(--topbar-h, 58px);bottom:0;transition:left .25s;z-index:15;box-shadow:4px 0 20px rgba(0,0,0,.15);} .sidebar.open{left:0;} .content{padding:18px;}}
+  .messagerieLayout{display:flex;gap:16px;align-items:flex-start;}
+  .messagerieContacts{width:220px;flex-shrink:0;}
+  @media(max-width:700px){
+    .grid2{grid-template-columns:1fr;}
+    .sidebar{position:fixed;left:-260px;top:var(--topbar-h, 58px);bottom:0;transition:left .25s;z-index:15;box-shadow:4px 0 20px rgba(0,0,0,.15);}
+    .sidebar.open{left:0;}
+    .content{padding:18px;}
+    .messagerieLayout{flex-direction:column;}
+    .messagerieContacts{width:100%;max-height:180px;overflow-y:auto;}
+  }
 
   table{width:100%;border-collapse:collapse;font-size:13.5px;}
   table th{text-align:left;background:#f4f6fb;color:var(--bleu-nuit);padding:10px 12px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;}
@@ -129,6 +138,7 @@
   .badge.secretariat{background:#d9f99d;color:#365314;}
   .badge.animateur{background:#fbcfe8;color:#831843;}
   .badge.aumonier{background:#ddd6fe;color:#4c1d95;}
+  .badge.tresorerie{background:#fed7aa;color:#7c2d12;}
 
   .placeholder{
     text-align:center;padding:60px 20px;color:var(--gris);
@@ -296,13 +306,23 @@ create table if not exists catechese_app_users (
   nom text not null,
   nom_utilisateur text unique,
   mot_de_passe text not null,
-  role text not null check (role in ('createur','responsable','secretariat','animateur','aumonier')),
+  role text not null check (role in ('createur','responsable','secretariat','animateur','aumonier','tresorerie')),
   photo_url text,
   created_at timestamptz default now()
 );
 
 -- Si la table existait déjà avant cette mise à jour, on ajoute la colonne manquante :
 alter table catechese_app_users add column if not exists nom_utilisateur text;
+
+-- Autorise le rôle 'tresorerie' si la table existait déjà avec l'ancienne contrainte
+do $do$
+begin
+  alter table catechese_app_users drop constraint if exists catechese_app_users_role_check;
+  alter table catechese_app_users add constraint catechese_app_users_role_check
+    check (role in ('createur','responsable','secretariat','animateur','aumonier','tresorerie'));
+exception when others then
+  raise notice 'Etape ignoree (contrainte role) : %', sqlerrm;
+end $do$;
 
 -- Classes de catéchèse (Phase 1)
 create table if not exists catechese_classes (
@@ -515,7 +535,7 @@ const MENU_ITEMS = [
   {key:'repartition', label:'Répartition classes & animateurs', icon:'🏫', roles:['createur','responsable','secretariat','animateur']},
   {key:'notes', label:'Notes et moyennes', icon:'📝', roles:['createur','responsable','secretariat','animateur']},
   {key:'resultats', label:'Résultat de fin d\'année', icon:'🏆', roles:['createur','responsable','secretariat','animateur']},
-  {key:'comptabilite', label:'Comptabilité', icon:'💰', roles:['createur','responsable','secretariat']},
+  {key:'comptabilite', label:'Comptabilité', icon:'💰', roles:['createur','responsable','secretariat','tresorerie']},
   {key:'actualite', label:'Actualité', icon:'📰', roles:['createur','responsable','secretariat','animateur','aumonier']},
   {key:'messagerie', label:'Messagerie', icon:'💬', roles:['createur','responsable','secretariat','animateur','aumonier']},
   {key:'attestations', label:'Attestations', icon:'📄', roles:['createur','responsable','secretariat']},
@@ -631,7 +651,7 @@ function enterApp(){
 }
 
 function roleLabel(r){
-  return {createur:'Créateur', responsable:'Responsable', secretariat:'Secrétariat', animateur:'Animateur', aumonier:'Aumônier'}[r] || r;
+  return {createur:'Créateur', responsable:'Responsable', secretariat:'Secrétariat', animateur:'Animateur', aumonier:'Aumônier', tresorerie:'Trésorerie'}[r] || r;
 }
 
 /* ============================================================
@@ -1636,6 +1656,10 @@ let comptaActiveTab = 'paiement';
 let depensesCache = [];
 let paiementsCache = [];
 
+function peutGererComptabilite(){
+  return ['createur','tresorerie'].includes(currentUser.role);
+}
+
 async function renderComptabilite(){
   document.getElementById('content').innerHTML = `
     <h2>💰 Comptabilité</h2>
@@ -1667,6 +1691,13 @@ function switchComptaTab(tab){
 }
 
 function renderComptaPaiement(){
+  if(!peutGererComptabilite()){
+    document.getElementById('comptaTabContent').innerHTML = `
+      <div class="card"><div class="placeholder">
+        Cette section est réservée au créateur et à la trésorerie. Tu peux consulter l'historique, les dépenses et le résumé de caisse, mais pas enregistrer de nouveau paiement.
+      </div></div>`;
+    return;
+  }
   const options = catechumenesCache.map(c=>`<option value="${c.id}">${esc(c.nom)} ${esc(c.prenom)}</option>`).join('');
   document.getElementById('comptaTabContent').innerHTML = `
     <div class="card">
@@ -1718,6 +1749,7 @@ function recalculerReste(){
 }
 
 async function validerPaiement(){
+  if(!peutGererComptabilite()){ showToast("Action réservée au créateur et à la trésorerie", true); return; }
   if(!sb){ showToast("Supabase non configuré", true); return; }
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const catechumene_id = document.getElementById('payCatechumene').value;
@@ -1743,6 +1775,7 @@ async function renderComptaHistorique(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const {data} = await sb.from('catechese_paiements').select('*, catechese_catechumenes(nom,prenom)').order('date_paiement', {ascending:false});
   paiementsCache = (data || []).filter(estAnneeActuelle);
+  const autorise = peutGererComptabilite();
   const rows = paiementsCache.map(p=>`
     <tr>
       <td>${esc(p.catechese_catechumenes?.nom||'')} ${esc(p.catechese_catechumenes?.prenom||'')}</td>
@@ -1750,10 +1783,10 @@ async function renderComptaHistorique(){
       <td>${p.avance} FCFA</td>
       <td>${p.reste} FCFA</td>
       <td>${esc(p.type_paiement||'')}</td>
-      <td class="noprint rowFlex">
+      ${autorise ? `<td class="noprint rowFlex">
         <button class="smallBtn edit" onclick="ouvrirEditionPaiement('${p.id}')">Modifier</button>
         <button class="smallBtn del" onclick="supprimerPaiement('${p.id}')">Supprimer</button>
-      </td>
+      </td>` : ''}
     </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--gris)">Aucun paiement enregistré</td></tr>`;
 
   document.getElementById('comptaTabContent').innerHTML = `
@@ -1763,7 +1796,7 @@ async function renderComptaHistorique(){
         <h3 style="border:none;padding:0;margin:0">Historique des paiements</h3>
         <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#comptaTabContent table', 'Historique des paiements')">Télécharger (PDF)</button>
       </div>
-      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th><th class="noprint"></th></tr></thead><tbody>${rows}</tbody></table>
+      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th>${autorise?'<th class="noprint"></th>':''}</tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
 
@@ -1794,6 +1827,7 @@ function ouvrirEditionPaiement(id){
 }
 
 async function enregistrerEditionPaiement(id){
+  if(!peutGererComptabilite()){ showToast("Action réservée au créateur et à la trésorerie", true); return; }
   if(!sb) return;
   const montant_total = parseFloat(document.getElementById('editMontantTotal').value)||0;
   const avance = parseFloat(document.getElementById('editAvance').value)||0;
@@ -1811,6 +1845,7 @@ async function enregistrerEditionPaiement(id){
 }
 
 async function supprimerPaiement(id){
+  if(!peutGererComptabilite()){ showToast("Action réservée au créateur et à la trésorerie", true); return; }
   if(!sb) return;
   if(!confirm("Supprimer ce paiement ? Cette action est définitive.")) return;
   const {error} = await sb.from('catechese_paiements').delete().eq('id', id);
@@ -1823,13 +1858,14 @@ async function renderComptaDepenses(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const {data} = await sb.from('catechese_depenses').select('*').order('date_depense', {ascending:false});
   depensesCache = (data || []).filter(estAnneeActuelle);
+  const autorise = peutGererComptabilite();
   const rows = depensesCache.map(d=>`
     <tr><td>${esc(d.libelle)}</td><td>${d.montant} FCFA</td><td>${d.date_depense||''}</td>
-    <td class="noprint"><button class="smallBtn del" onclick="supprimerDepense('${d.id}')">Supprimer</button></td></tr>`).join('')
+    ${autorise ? `<td class="noprint"><button class="smallBtn del" onclick="supprimerDepense('${d.id}')">Supprimer</button></td>` : ''}</tr>`).join('')
     || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucune dépense enregistrée</td></tr>`;
 
   document.getElementById('comptaTabContent').innerHTML = `
-    <div class="card">
+    ${autorise ? `<div class="card">
       <h3>Ajouter une dépense</h3>
       <div class="grid2">
         <div class="field"><label>Libellé</label><input id="depLibelle" placeholder="ex: Achat de fournitures"></div>
@@ -1837,17 +1873,18 @@ async function renderComptaDepenses(){
         <div class="field"><label>Date</label><input id="depDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
       </div>
       <button class="btn gold" style="width:auto;padding:11px 22px" onclick="ajouterDepense()">Ajouter</button>
-    </div>
+    </div>` : ''}
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;padding:0;margin:0">Dépenses (${depensesCache.length})</h3>
         <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableDepenses', 'Historique des dépenses')">Télécharger (PDF)</button>
       </div>
-      <table id="tableDepenses" style="margin-top:14px"><thead><tr><th>Libellé</th><th>Montant</th><th>Date</th><th class="noprint"></th></tr></thead><tbody>${rows}</tbody></table>
+      <table id="tableDepenses" style="margin-top:14px"><thead><tr><th>Libellé</th><th>Montant</th><th>Date</th>${autorise?'<th class="noprint"></th>':''}</tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
 
 async function ajouterDepense(){
+  if(!peutGererComptabilite()){ showToast("Action réservée au créateur et à la trésorerie", true); return; }
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const libelle = document.getElementById('depLibelle').value.trim();
   const montant = parseFloat(document.getElementById('depMontant').value)||0;
@@ -1859,6 +1896,7 @@ async function ajouterDepense(){
 }
 
 async function supprimerDepense(id){
+  if(!peutGererComptabilite()){ showToast("Action réservée au créateur et à la trésorerie", true); return; }
   if(!sb){ showToast("Supabase non configuré", true); return; }
   if(!confirm("Supprimer cette dépense ?")) return;
   await sb.from('catechese_depenses').delete().eq('id', id);
@@ -2007,12 +2045,12 @@ function renderMessagerieLayout(){
   }).join('') || `<div style="color:var(--gris);font-size:13px">Aucun autre utilisateur pour le moment</div>`;
 
   document.getElementById('messagerieBody').innerHTML = `
-    <div style="display:flex;gap:16px;align-items:flex-start">
-      <div class="card" style="width:220px;flex-shrink:0">
+    <div class="messagerieLayout">
+      <div class="card messagerieContacts">
         <h3>Contacts</h3>
         ${contacts}
       </div>
-      <div class="card" style="flex:1;min-height:400px" id="chatPanel">
+      <div class="card" style="flex:1;min-height:400px;min-width:0" id="chatPanel">
         <div class="placeholder">Choisis un contact pour démarrer la conversation</div>
       </div>
     </div>`;
@@ -2974,6 +3012,7 @@ async function renderOptionUtilisateurs(){
             <option value="secretariat">Secrétariat</option>
             <option value="animateur">Animateur</option>
             <option value="aumonier">Aumônier</option>
+            <option value="tresorerie">Trésorerie</option>
           </select>
         </div>
       </div>
@@ -3007,6 +3046,7 @@ function ouvrirEditionUtilisateur(id){
             <option value="secretariat" ${u.role==='secretariat'?'selected':''}>Secrétariat</option>
             <option value="animateur" ${u.role==='animateur'?'selected':''}>Animateur</option>
             <option value="aumonier" ${u.role==='aumonier'?'selected':''}>Aumônier</option>
+            <option value="tresorerie" ${u.role==='tresorerie'?'selected':''}>Trésorerie</option>
           </select>
         </div>
       </div>
