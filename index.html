@@ -637,17 +637,49 @@ function handleLogout(){
   document.getElementById('loginPass').value='';
 }
 
-function enterApp(){
+async function enterApp(){
+  await loadPublicConfig(); // s'assurer d'avoir la période d'utilisation la plus à jour
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appShell').style.display = 'block';
   document.getElementById('topbarUserName').textContent = currentUser.nom;
   const roleBadge = document.getElementById('topbarUserRole');
   roleBadge.textContent = roleLabel(currentUser.role);
   if(appConfig && appConfig.nom_paroisse) document.getElementById('topbarParoisse').textContent = appConfig.nom_paroisse.toUpperCase();
+
+  if(currentUser.role !== 'createur' && !periodeValide()){
+    renderVerrouille();
+    return;
+  }
+
   renderSidebar();
   navigateTo('accueil');
   demarrerSuiviTempsReel();
   setTimeout(ajusterHauteurTopbar, 50);
+}
+
+function periodeValide(){
+  if(!appConfig) return false;
+  const {periode_debut, periode_fin} = appConfig;
+  if(!periode_debut || !periode_fin) return false;
+  const aujourdhui = new Date().toISOString().slice(0,10);
+  return aujourdhui >= periode_debut && aujourdhui <= periode_fin;
+}
+
+function renderVerrouille(){
+  document.getElementById('sidebar').innerHTML = '';
+  document.getElementById('content').innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:center;min-height:65vh">
+      <div class="card" style="max-width:480px;text-align:center;border:2px solid #1a1a1a">
+        <div style="font-size:40px;margin-bottom:10px">🔒</div>
+        <h3 style="border:none">Application verrouillée</h3>
+        <p style="color:var(--gris);font-size:14px;margin-top:10px;line-height:1.6">
+          ${!appConfig?.periode_debut || !appConfig?.periode_fin
+            ? "Aucune période d'utilisation n'est configurée."
+            : "La période d'utilisation configurée est terminée."}
+          <br>Seul le créateur de l'application peut la mettre à jour (Option → Période d'utilisation).
+        </p>
+      </div>
+    </div>`;
 }
 
 function roleLabel(r){
