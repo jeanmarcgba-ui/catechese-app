@@ -501,9 +501,21 @@ end $do$;
 do $do$
 begin
   execute 'drop policy if exists "Acces public catechese-fichiers" on storage.objects';
-  execute $sql$create policy "Acces public catechese-fichiers" on storage.objects for all
+  execute 'drop policy if exists "Lecture publique catechese-fichiers" on storage.objects';
+  execute 'drop policy if exists "Ajout catechese-fichiers" on storage.objects';
+  execute 'drop policy if exists "Modification catechese-fichiers" on storage.objects';
+  -- Lecture publique (nécessaire pour afficher photos, logo, vocaux, documents)
+  execute $sql$create policy "Lecture publique catechese-fichiers" on storage.objects for select
+    using ( bucket_id = 'catechese-fichiers' )$sql$;
+  -- Ajout de nouveaux fichiers (inscriptions, logo, messagerie...)
+  execute $sql$create policy "Ajout catechese-fichiers" on storage.objects for insert
+    with check ( bucket_id = 'catechese-fichiers' )$sql$;
+  -- Remplacement d'un fichier existant au même chemin (upsert du logo par exemple)
+  execute $sql$create policy "Modification catechese-fichiers" on storage.objects for update
     using ( bucket_id = 'catechese-fichiers' )
     with check ( bucket_id = 'catechese-fichiers' )$sql$;
+  -- Volontairement AUCUNE politique de suppression : empêche l'application (clé publique)
+  -- de supprimer des fichiers du stockage, même en cas de faille ou d'abus.
 exception when others then
   raise notice 'Etape ignoree (politique de stockage) : %', sqlerrm;
 end $do$;
