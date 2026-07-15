@@ -1,0 +1,13 @@
+{
+  "name": "Catéchèse - Gestion Paroissiale",
+  "short_name": "Catéchèse",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f2447",
+  "theme_color": "#0f2447",
+  "icons": [
+    { "src": "catechese-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "catechese-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
