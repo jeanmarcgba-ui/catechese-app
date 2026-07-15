@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Catéchèse - Gestion Paroissiale</title>
+<meta name="theme-color" content="#0f2447">
+<link rel="manifest" href="catechese-manifest.json">
 <link rel="icon" id="favicon" href="">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -3178,6 +3180,9 @@ async function deleteUser(id){
    INITIALISATION
    ============================================================ */
 window.addEventListener('DOMContentLoaded', ()=>{
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('catechese-service-worker.js').catch(e=>console.warn('SW non enregistré', e));
+  }
   document.getElementById('favicon').href = APP_LOGO_B64;
   document.getElementById('loginLogoImg').src = APP_LOGO_B64;
   document.getElementById('topbarLogo').src = APP_LOGO_B64;
