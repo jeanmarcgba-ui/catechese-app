@@ -813,8 +813,7 @@ function mettreAJourBadgeMessagerie(){
 
 async function ouvrirNotification(nom){
   document.getElementById('presenceDropdown')?.classList.remove('open');
-  navigateTo('messagerie');
-  await new Promise(r=>setTimeout(r, 150));
+  await navigateTo('messagerie');
   await ouvrirConversation(nom);
 }
 
@@ -836,7 +835,7 @@ function renderSidebar(){
 
 let currentPageKey = 'accueil';
 
-function navigateTo(key){
+async function navigateTo(key){
   currentPageKey = key;
   document.querySelectorAll('.menuItem').forEach(b=>b.classList.remove('active'));
   const btn = document.getElementById('menu-'+key);
@@ -857,7 +856,7 @@ function navigateTo(key){
     archives: renderArchives,
   };
   const item = MENU_ITEMS.find(m=>m.key===key);
-  if(renderers[key]) renderers[key]();
+  if(renderers[key]) await renderers[key]();
   else renderPlaceholder(item);
   if(window.innerWidth <= 700){ document.getElementById('sidebar').classList.remove('open'); }
 }
@@ -2283,6 +2282,25 @@ async function envoyerMessage(){
   const vocal = blobVocalEnregistre;
   if(!texte && !fichier && !vocal){ showToast("Écris un message, joins un fichier ou enregistre un vocal", true); return; }
 
+  // Affichage instantané du message avant même la fin de l'envoi (aperçu optimiste)
+  const idTemp = 'bulle-temp-'+Date.now();
+  const apercuTexte = texte || (vocal ? '🎤 Message vocal…' : fichier ? '📎 '+fichier.name+'…' : '');
+  const liste = document.getElementById('messagesListe');
+  if(liste){
+    const videMsg = liste.querySelector('div[style*="Aucun message"]');
+    if(videMsg) videMsg.remove();
+    const bulleTemp = document.createElement('div');
+    bulleTemp.id = idTemp;
+    bulleTemp.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:10px;opacity:.55';
+    bulleTemp.innerHTML = `<div style="max-width:70%;background:var(--bleu-nuit);color:#fff;padding:10px 14px;border-radius:12px">
+      <div>${esc(apercuTexte)}</div>
+      <div style="font-size:10px;opacity:.7;margin-top:4px">Envoi en cours…</div>
+    </div>`;
+    liste.appendChild(bulleTemp);
+    liste.scrollTop = liste.scrollHeight;
+  }
+  document.getElementById('msgTexte').value = '';
+
   const payload = {
     expediteur_nom: currentUser.nom,
     destinataire_nom: messagerieContact,
@@ -2303,8 +2321,8 @@ async function envoyerMessage(){
   }
 
   const {error} = await sb.from('catechese_messages').insert(payload);
+  document.getElementById(idTemp)?.remove(); // retire la bulle temporaire, la vraie va la remplacer
   if(error){ showToast("Erreur : "+error.message, true); return; }
-  document.getElementById('msgTexte').value = '';
   retirerPieceJointe();
   chargerMessages();
 }
