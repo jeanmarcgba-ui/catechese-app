@@ -279,7 +279,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-20-01"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-20-02"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -2137,10 +2137,20 @@ async function chargerMessages(){
   const bulles = messages.map(m=>{
     const moi = m.expediteur_nom === currentUser.nom;
     let media = '';
-    if(m.type_message==='photo') media = `<img src="${esc(m.media_url)}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:6px">`;
-    else if(m.type_message==='video') media = `<video src="${esc(m.media_url)}" controls style="max-width:220px;border-radius:8px;display:block;margin-bottom:6px"></video>`;
-    else if(m.type_message==='vocal') media = `<audio src="${esc(m.media_url)}" controls style="display:block;margin-bottom:6px"></audio>`;
-    else if(m.type_message==='document') media = `<a href="${esc(m.media_url)}" target="_blank" style="display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.08);padding:8px 10px;border-radius:8px;margin-bottom:6px;color:inherit;text-decoration:none">📄 <span style="word-break:break-all;font-size:13px">${esc(nomFichierDepuisUrl(m.media_url))}</span></a>`;
+    if(m.type_message==='photo') media = `
+      <a href="${esc(m.media_url)}" target="_blank" style="display:block;margin-bottom:2px">
+        <img src="${esc(m.media_url)}" style="max-width:200px;border-radius:8px;display:block;cursor:pointer">
+      </a>
+      <a href="${esc(m.media_url)}" download target="_blank" style="font-size:11px;color:inherit;opacity:.8;text-decoration:underline;display:inline-block;margin-bottom:6px">⬇ Télécharger l'image</a>`;
+    else if(m.type_message==='video') media = `
+      <video src="${esc(m.media_url)}" controls style="max-width:220px;border-radius:8px;display:block;margin-bottom:2px"></video>
+      <a href="${esc(m.media_url)}" download target="_blank" style="font-size:11px;color:inherit;opacity:.8;text-decoration:underline;display:inline-block;margin-bottom:6px">⬇ Télécharger la vidéo</a>`;
+    else if(m.type_message==='vocal') media = `
+      <audio src="${esc(m.media_url)}" controls style="display:block;margin-bottom:2px"></audio>
+      <a href="${esc(m.media_url)}" download target="_blank" style="font-size:11px;color:inherit;opacity:.8;text-decoration:underline;display:inline-block;margin-bottom:6px">⬇ Télécharger le vocal</a>`;
+    else if(m.type_message==='document') media = `
+      <a href="${esc(m.media_url)}" target="_blank" style="display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.08);padding:8px 10px;border-radius:8px;margin-bottom:4px;color:inherit;text-decoration:none">📄 <span style="word-break:break-all;font-size:13px">${esc(nomFichierDepuisUrl(m.media_url))}</span></a>
+      <a href="${esc(m.media_url)}" download target="_blank" style="font-size:11px;color:inherit;opacity:.8;text-decoration:underline;display:inline-block;margin-bottom:6px">⬇ Télécharger le document</a>`;
     const actions = moi ? `<div class="rowFlex" style="margin-top:4px">
         <button class="smallBtn edit" style="padding:3px 8px;font-size:11px" onclick="modifierMessage('${m.id}')">Modifier</button>
         <button class="smallBtn del" style="padding:3px 8px;font-size:11px" onclick="supprimerMessage('${m.id}')">Supprimer</button>
