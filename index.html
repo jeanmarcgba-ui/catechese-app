@@ -73,6 +73,8 @@
   .btn.gold:hover{background:var(--or-clair);}
   .btn.ghost{background:transparent;border:1.5px solid var(--bleu-nuit);color:var(--bleu-nuit);}
   .btn.danger{background:var(--rouge);}
+  .btn.btn-annuler{background:var(--rouge-bordeaux);color:#d8cba8;border:1.5px solid var(--rouge-bordeaux);}
+  .btn.btn-annuler:hover{background:#6b1830;}
   .errMsg{color:var(--rouge);font-size:13px;text-align:center;margin-top:10px;min-height:16px;}
 
   /* ---------- APP SHELL ---------- */
@@ -279,7 +281,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-20-02"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-21-01"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -1128,7 +1130,7 @@ function openInscriptionForm(id){
     </div>
     <div class="rowFlex">
       <button class="btn gold" style="width:auto;padding:11px 24px" onclick="saveInscription()">Enregistrer</button>
-      <button class="btn ghost" style="width:auto;padding:11px 24px" onclick="renderInscriptionsList()">Annuler</button>
+      <button class="btn btn-annuler" style="width:auto;padding:11px 24px" onclick="renderInscriptionsList()">Annuler</button>
     </div>`;
 }
 
@@ -1311,7 +1313,7 @@ function openAnimateurForm(id){
     </div>
     <div class="rowFlex">
       <button class="btn gold" style="width:auto;padding:11px 24px" onclick="saveAnimateur()">Enregistrer</button>
-      <button class="btn ghost" style="width:auto;padding:11px 24px" onclick="renderAnimateursList()">Annuler</button>
+      <button class="btn btn-annuler" style="width:auto;padding:11px 24px" onclick="renderAnimateursList()">Annuler</button>
     </div>`;
 }
 
@@ -1868,7 +1870,7 @@ function ouvrirEditionPaiement(id){
       </div>
       <div class="rowFlex">
         <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionPaiement('${p.id}')">Enregistrer les modifications</button>
-        <button class="btn ghost" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionPaiementZone').innerHTML=''">Annuler</button>
+        <button class="btn btn-annuler" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionPaiementZone').innerHTML=''">Annuler</button>
       </div>
     </div>`;
 }
@@ -2524,7 +2526,7 @@ function ouvrirEditionAttestation(id){
       </div>
       <div class="rowFlex">
         <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionAttestation('${a.id}')">Enregistrer les modifications</button>
-        <button class="btn ghost" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionAttestationZone').innerHTML=''">Annuler</button>
+        <button class="btn btn-annuler" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionAttestationZone').innerHTML=''">Annuler</button>
       </div>
     </div>`;
 }
@@ -3139,7 +3141,7 @@ function ouvrirEditionUtilisateur(id){
       </div>
       <div class="rowFlex">
         <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionUtilisateur('${u.id}')">Enregistrer les modifications</button>
-        <button class="btn ghost" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionUtilisateurZone').innerHTML=''">Annuler</button>
+        <button class="btn btn-annuler" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionUtilisateurZone').innerHTML=''">Annuler</button>
       </div>
     </div>`;
 }
