@@ -241,6 +241,31 @@
     </div>
     <button class="btn" onclick="handleLogin()">Se connecter</button>
     <div class="errMsg" id="loginErr"></div>
+    <div style="text-align:center;margin-top:12px">
+      <a href="#" onclick="basculerRecuperation(event)" style="font-size:12.5px;color:var(--bleu-nuit);text-decoration:underline">Mot de passe oublié ?</a>
+    </div>
+  </div>
+
+  <div class="loginCard" id="recuperationCard" style="display:none;margin-top:16px">
+    <h1 style="font-size:18px">Réinitialiser le mot de passe</h1>
+    <p class="sub">Entre ton nom d'utilisateur et ton code de récupération</p>
+    <div class="field">
+      <label>Nom d'utilisateur</label>
+      <input type="text" id="recupNom" placeholder="Votre nom d'utilisateur">
+    </div>
+    <div class="field">
+      <label>Code de récupération</label>
+      <input type="text" id="recupCode" placeholder="ex : AB3D-9K2P" style="font-family:monospace;letter-spacing:1px">
+    </div>
+    <div class="field">
+      <label>Nouveau mot de passe</label>
+      <input type="password" id="recupNouveauPass" placeholder="••••••••">
+    </div>
+    <button class="btn gold" onclick="reinitialiserMotDePasse()">Réinitialiser</button>
+    <div class="errMsg" id="recupErr"></div>
+    <div style="text-align:center;margin-top:10px">
+      <a href="#" onclick="basculerRecuperation(event)" style="font-size:12.5px;color:var(--bleu-nuit);text-decoration:underline">← Retour à la connexion</a>
+    </div>
   </div>
 </div>
 
@@ -281,7 +306,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-21-01"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-22-01"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -313,11 +338,13 @@ create table if not exists catechese_app_users (
   mot_de_passe text not null,
   role text not null check (role in ('createur','responsable','secretariat','animateur','aumonier','tresorerie')),
   photo_url text,
+  code_recuperation text,
   created_at timestamptz default now()
 );
 
--- Si la table existait déjà avant cette mise à jour, on ajoute la colonne manquante :
+-- Si la table existait déjà avant cette mise à jour, on ajoute les colonnes manquantes :
 alter table catechese_app_users add column if not exists nom_utilisateur text;
+alter table catechese_app_users add column if not exists code_recuperation text;
 
 -- Autorise le rôle 'tresorerie' si la table existait déjà avec l'ancienne contrainte
 do $do$
@@ -645,6 +672,44 @@ async function handleLogin(){
   enterApp();
 }
 
+function basculerRecuperation(event){
+  if(event) event.preventDefault();
+  const loginCard = document.querySelector('.loginCard:not(#recuperationCard)');
+  const recupCard = document.getElementById('recuperationCard');
+  const enRecuperation = recupCard.style.display !== 'none';
+  recupCard.style.display = enRecuperation ? 'none' : 'block';
+  loginCard.style.display = enRecuperation ? 'block' : 'none';
+  document.getElementById('recupErr').textContent = '';
+  document.getElementById('recupNom').value = '';
+  document.getElementById('recupCode').value = '';
+  document.getElementById('recupNouveauPass').value = '';
+}
+
+async function reinitialiserMotDePasse(){
+  const nom = document.getElementById('recupNom').value.trim();
+  const code = document.getElementById('recupCode').value.trim().toUpperCase();
+  const nouveauPass = document.getElementById('recupNouveauPass').value;
+  const errEl = document.getElementById('recupErr');
+  errEl.textContent = '';
+
+  if(!nom || !code || !nouveauPass){ errEl.textContent = "Veuillez remplir tous les champs."; return; }
+  if(!sb){ errEl.textContent = "Supabase n'est pas encore configuré."; return; }
+
+  const {data, error} = await sb.from('catechese_app_users').select('id, code_recuperation')
+    .eq('nom_utilisateur', nom).maybeSingle();
+
+  if(error || !data || !data.code_recuperation || data.code_recuperation.toUpperCase() !== code){
+    errEl.textContent = "Nom d'utilisateur ou code de récupération incorrect.";
+    return;
+  }
+
+  const {error: erreurMaj} = await sb.from('catechese_app_users').update({mot_de_passe: nouveauPass}).eq('id', data.id);
+  if(erreurMaj){ errEl.textContent = "Erreur : "+erreurMaj.message; return; }
+
+  showToast("Mot de passe réinitialisé ✓ Tu peux te connecter.");
+  basculerRecuperation();
+}
+
 function handleLogout(){
   arreterSuiviTempsReel();
   currentUser = null;
@@ -652,6 +717,8 @@ function handleLogout(){
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('loginNom').value='';
   document.getElementById('loginPass').value='';
+  document.getElementById('recuperationCard').style.display = 'none';
+  document.querySelector('.loginCard:not(#recuperationCard)').style.display = 'block';
 }
 
 async function enterApp(){
@@ -3139,11 +3206,30 @@ function ouvrirEditionUtilisateur(id){
           </select>
         </div>
       </div>
-      <div class="rowFlex">
+      <div class="field" style="margin-top:4px">
+        <label>Code de récupération (pour « Mot de passe oublié ? »)</label>
+        <div class="rowFlex">
+          <input id="editUserCode" value="${esc(u.code_recuperation||'')}" style="flex:1;font-family:monospace;letter-spacing:1px" readonly>
+          <button class="smallBtn edit" type="button" onclick="regenererCodeRecuperation('${u.id}')">🔄 Régénérer</button>
+        </div>
+      </div>
+      <div class="rowFlex" style="margin-top:14px">
         <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionUtilisateur('${u.id}')">Enregistrer les modifications</button>
         <button class="btn btn-annuler" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionUtilisateurZone').innerHTML=''">Annuler</button>
       </div>
     </div>`;
+}
+
+async function regenererCodeRecuperation(id){
+  if(!sb) return;
+  const nouveauCode = genererCodeRecuperation();
+  const {error} = await sb.from('catechese_app_users').update({code_recuperation: nouveauCode}).eq('id', id);
+  if(error){ showToast("Erreur : "+error.message, true); return; }
+  const champ = document.getElementById('editUserCode');
+  if(champ) champ.value = nouveauCode;
+  const u = usersCache.find(x=>x.id===id);
+  if(u) u.code_recuperation = nouveauCode;
+  showToast("Nouveau code généré ✓");
 }
 
 async function enregistrerEditionUtilisateur(id){
@@ -3193,6 +3279,16 @@ function copySqlScript(){
   });
 }
 
+function genererCodeRecuperation(){
+  const caracteres = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans caractères ambigus (0/O, 1/I...)
+  let code = '';
+  for(let i=0;i<8;i++){
+    if(i===4) code += '-';
+    code += caracteres[Math.floor(Math.random()*caracteres.length)];
+  }
+  return code;
+}
+
 async function addUser(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const nom = document.getElementById('newUserNom').value.trim();
@@ -3201,14 +3297,34 @@ async function addUser(){
   const role = document.getElementById('newUserRole').value;
   if(!nom || !nom_utilisateur || !mot_de_passe){ showToast("Nom complet, nom d'utilisateur et mot de passe requis", true); return; }
   if(nom_utilisateur.toLowerCase() === 'jean marc'){ showToast("Ce nom d'utilisateur est réservé au créateur", true); return; }
-  const {error} = await sb.from('catechese_app_users').insert({nom, nom_utilisateur, mot_de_passe, role});
+  const code_recuperation = genererCodeRecuperation();
+  const {error} = await sb.from('catechese_app_users').insert({nom, nom_utilisateur, mot_de_passe, role, code_recuperation});
   if(error){
     if(error.message.includes('duplicate') || error.code==='23505') showToast("Ce nom d'utilisateur est déjà pris", true);
     else showToast("Erreur : "+error.message, true);
     return;
   }
   showToast("Utilisateur ajouté ✓");
+  afficherCodeRecuperation(nom, code_recuperation);
   renderOptionUtilisateurs();
+}
+
+function afficherCodeRecuperation(nom, code){
+  const fond = document.createElement('div');
+  fond.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:400;display:flex;align-items:center;justify-content:center;padding:20px';
+  fond.innerHTML = `
+    <div class="card" style="max-width:420px;text-align:center;border:2px solid #1a1a1a">
+      <div style="font-size:34px;margin-bottom:8px">🔑</div>
+      <h3 style="border:none">Code de récupération de ${esc(nom)}</h3>
+      <p style="color:var(--gris);font-size:13px;margin:10px 0">
+        Ce code permet de réinitialiser le mot de passe en cas d'oubli, depuis le lien
+        « Mot de passe oublié ? » de la page de connexion. Conserve-le en lieu sûr.
+      </p>
+      <div style="font-family:monospace;font-size:26px;font-weight:800;color:var(--bleu-nuit);background:#eef2fb;padding:14px;border-radius:10px;letter-spacing:2px">${esc(code)}</div>
+      <p style="color:var(--gris);font-size:12px;margin-top:10px">Tu pourras revoir ce code à tout moment en modifiant cet utilisateur.</p>
+      <button class="btn gold" style="width:auto;padding:10px 26px;margin-top:16px" onclick="this.closest('div[style*=fixed]').remove()">J'ai noté le code</button>
+    </div>`;
+  document.body.appendChild(fond);
 }
 
 async function deleteUser(id){
