@@ -307,7 +307,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-23-02"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-23-03"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -3383,10 +3383,13 @@ async function renderOptionClasses(){
   }
   const rows = classesCache.map(cl=>`
     <tr>
-      <td>${esc(cl.nom)}</td>
+      <td><a href="#" onclick="ouvrirEditionClasse('${cl.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(cl.nom)}</a></td>
       <td>${esc(cl.categorie)}</td>
       <td>${esc(cl.effectif_max)}</td>
-      <td><button class="smallBtn del" onclick="deleteClasse('${cl.id}')">Supprimer</button></td>
+      <td class="rowFlex">
+        <button class="smallBtn edit" onclick="ouvrirEditionClasse('${cl.id}')">Modifier</button>
+        <button class="smallBtn del" onclick="deleteClasse('${cl.id}')">Supprimer</button>
+      </td>
     </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucune classe pour le moment</td></tr>`;
 
   document.getElementById('optionTabContent').innerHTML = `
@@ -3405,6 +3408,7 @@ async function renderOptionClasses(){
       </div>
       <button class="btn gold" style="width:auto;padding:11px 22px" onclick="addClasse()">Ajouter la classe</button>
     </div>
+    <div id="editionClasseZone"></div>
     <div class="card">
       <h3>Classes existantes (${classesCache.length})</h3>
       <table>
@@ -3412,6 +3416,43 @@ async function renderOptionClasses(){
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+function ouvrirEditionClasse(id){
+  const cl = classesCache.find(c=>c.id===id);
+  if(!cl) return;
+  document.getElementById('editionClasseZone').innerHTML = `
+    <div class="card">
+      <h3>Modifier la classe — ${esc(cl.nom)}</h3>
+      <div class="grid2">
+        <div class="field"><label>Nom de la classe</label><input id="editClasseNom" value="${esc(cl.nom)}"></div>
+        <div class="field"><label>Catégorie</label>
+          <select id="editClasseCategorie">
+            <option value="enfants" ${cl.categorie==='enfants'?'selected':''}>Catéchèse enfants</option>
+            <option value="jeunes" ${cl.categorie==='jeunes'?'selected':''}>Catéchèse jeunes</option>
+            <option value="adultes" ${cl.categorie==='adultes'?'selected':''}>Catéchèse adultes</option>
+          </select>
+        </div>
+        <div class="field"><label>Effectif maximal</label><input id="editClasseMax" type="number" value="${cl.effectif_max}"></div>
+      </div>
+      <div class="rowFlex">
+        <button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerEditionClasse('${cl.id}')">Enregistrer les modifications</button>
+        <button class="btn btn-annuler" style="width:auto;padding:11px 22px" onclick="document.getElementById('editionClasseZone').innerHTML=''">Annuler</button>
+      </div>
+    </div>`;
+}
+
+async function enregistrerEditionClasse(id){
+  if(!sb) return;
+  const nom = document.getElementById('editClasseNom').value.trim();
+  const categorie = document.getElementById('editClasseCategorie').value;
+  const effectif_max = parseInt(document.getElementById('editClasseMax').value)||30;
+  if(!nom){ showToast("Le nom de la classe est requis", true); return; }
+  const {error} = await sb.from('catechese_classes').update({nom, categorie, effectif_max}).eq('id', id);
+  if(error){ showToast("Erreur : "+error.message, true); return; }
+  showToast("Classe modifiée ✓");
+  document.getElementById('editionClasseZone').innerHTML = '';
+  renderOptionClasses();
 }
 
 async function addClasse(){
