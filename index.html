@@ -307,7 +307,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-23-03"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-23-05"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -1329,10 +1329,11 @@ function openInscriptionForm(id){
         </div>
         <div class="field"><label>Année de catéchèse</label><input id="fAnnee" placeholder="ex: 2025-2026" value="${esc(c?.annee_catechese || appConfig?.annee_catechese || '')}"></div>
         <div class="field"><label>Classe</label>
-          <select id="fClasse">
+          <select id="fClasse" onchange="afficherEffectifClasse()">
             <option value="">— Non assigné —</option>
             ${classesCache.map(cl=>`<option value="${cl.id}" ${c?.class_id===cl.id?'selected':''}>${esc(cl.nom)} (${categorieLabel(cl.categorie)})</option>`).join('')}
           </select>
+          <div id="effectifClasseInfo" style="font-size:11px;color:var(--gris);margin-top:4px"></div>
         </div>
         <div class="field"><label>Photo du catéchumène</label><input id="fPhoto" type="file" accept="image/*"></div>
         <div class="field"><label>Pièces jointes (documents)</label><input id="fPieces" type="file" multiple></div>
@@ -1359,6 +1360,24 @@ function openInscriptionForm(id){
       <button class="btn gold" style="width:auto;padding:11px 24px" onclick="saveInscription()">Enregistrer</button>
       <button class="btn btn-annuler" style="width:auto;padding:11px 24px" onclick="renderInscriptionsList()">Annuler</button>
     </div>`;
+  afficherEffectifClasse();
+}
+
+async function afficherEffectifClasse(){
+  const infoEl = document.getElementById('effectifClasseInfo');
+  if(!infoEl) return;
+  const classeId = document.getElementById('fClasse').value;
+  if(!classeId){ infoEl.textContent = ''; return; }
+  const classe = classesCache.find(c=>c.id===classeId);
+  if(!classe || !classe.effectif_max){ infoEl.textContent = ''; return; }
+  if(!sb) return;
+  const {count} = await sb.from('catechese_catechumenes').select('id', {count:'exact', head:true})
+    .eq('class_id', classeId).neq('id', inscriptionEditId || '00000000-0000-0000-0000-000000000000');
+  const effectifActuel = count || 0;
+  const plein = effectifActuel >= classe.effectif_max;
+  infoEl.innerHTML = plein
+    ? `<span style="color:var(--rouge);font-weight:700">⚠️ Effectif complet : ${effectifActuel}/${classe.effectif_max}</span>`
+    : `Effectif actuel : ${effectifActuel}/${classe.effectif_max}`;
 }
 
 function toggleBapteme(){
@@ -1374,11 +1393,58 @@ async function uploadFile(file, prefix){
   return data.publicUrl;
 }
 
+function nomClasseSuivante(nomClassePleine){
+  // Retire un éventuel suffixe numérique déjà présent (ex: "... 2" -> "...")
+  const nomBase = nomClassePleine.replace(/\s+\d+$/, '').trim();
+  let plusGrandNumero = 1;
+  const echappe = nomBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const motif = new RegExp('^' + echappe + '(?:\\s+(\\d+))?$', 'i');
+  classesCache.forEach(cl=>{
+    const correspondance = (cl.nom||'').trim().match(motif);
+    if(correspondance){
+      const numero = correspondance[1] ? parseInt(correspondance[1]) : 1;
+      if(numero > plusGrandNumero) plusGrandNumero = numero;
+    }
+  });
+  return `${nomBase} ${plusGrandNumero + 1}`;
+}
+
 async function saveInscription(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
   const nom = document.getElementById('fNom').value.trim();
   const prenom = document.getElementById('fPrenom').value.trim();
   if(!nom || !prenom){ showToast("Nom et prénom sont requis", true); return; }
+
+  let classeChoisieId = document.getElementById('fClasse').value || null;
+  if(classeChoisieId){
+    const classe = classesCache.find(c=>c.id===classeChoisieId);
+    if(classe && classe.effectif_max){
+      const {count} = await sb.from('catechese_catechumenes').select('id', {count:'exact', head:true})
+        .eq('class_id', classeChoisieId).neq('id', inscriptionEditId || '00000000-0000-0000-0000-000000000000');
+      const effectifActuel = count || 0;
+      if(effectifActuel >= classe.effectif_max){
+        const nouveauNom = nomClasseSuivante(classe.nom);
+        const continuer = confirm(
+          `⚠️ La classe « ${classe.nom} » a atteint son effectif maximal (${effectifActuel}/${classe.effectif_max}).\n\n`+
+          `Cliquer OK pour créer automatiquement une nouvelle classe « ${nouveauNom} » (même catégorie, même effectif maximal) et y inscrire ce catéchumène.\n\n`+
+          `Cliquer Annuler pour choisir toi-même une autre classe, ou modifier l'effectif maximal dans Option.`
+        );
+        if(!continuer) return;
+
+        const {data:nouvelleClasse, error:erreurClasse} = await sb.from('catechese_classes').insert({
+          nom: nouveauNom,
+          categorie: classe.categorie,
+          effectif_max: classe.effectif_max,
+          annee_catechese: classe.annee_catechese || appConfig?.annee_catechese || null,
+        }).select().single();
+        if(erreurClasse){ showToast("Erreur lors de la création de la nouvelle classe : "+erreurClasse.message, true); return; }
+
+        classesCache.push(nouvelleClasse);
+        classeChoisieId = nouvelleClasse.id;
+        showToast(`Nouvelle classe « ${nouveauNom} » créée ✓`);
+      }
+    }
+  }
 
   const payload = {
     nom, prenom,
@@ -1393,7 +1459,7 @@ async function saveInscription(){
     date_bapteme: document.getElementById('fDateBapteme').value || null,
     lieu_bapteme: document.getElementById('fLieuBapteme').value.trim(),
     annee_catechese: document.getElementById('fAnnee').value.trim(),
-    class_id: document.getElementById('fClasse').value || null,
+    class_id: classeChoisieId,
   };
 
   const photoInput = document.getElementById('fPhoto');
