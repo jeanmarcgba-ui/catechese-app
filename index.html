@@ -283,6 +283,7 @@
       </div>
       <span id="topbarUserName"></span>
       <span class="role" id="topbarUserRole"></span>
+      <button onclick="demanderPermissionNotifications()" id="boutonActiverNotifs" style="display:none;" title="Recevoir une notification quand un message arrive">🔔 Activer les notifications</button>
       <button onclick="actualiserPageCourante()" id="refreshBtn" title="Recharger les données de cette page">🔄 Actualiser</button>
       <button onclick="toggleSidebar()" id="burgerBtn" style="display:none;">☰ Menu</button>
       <button onclick="handleLogout()">Déconnexion</button>
@@ -306,7 +307,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-22-01"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-23-01"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -602,6 +603,29 @@ function esc(str){
   return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function trouverCatechumenePartout(id){
+  return catechumenesCache.find(x=>x.id===id)
+    || (typeof repartitionCatechumenesActuels!=='undefined' ? repartitionCatechumenesActuels.find(x=>x.id===id) : null)
+    || (typeof notesCatechumenesActuels!=='undefined' ? notesCatechumenesActuels.find(x=>x.id===id) : null)
+    || (typeof resultatsCatechumenesActuels!=='undefined' ? resultatsCatechumenesActuels.find(x=>x.id===id) : null)
+    || null;
+}
+
+function correspondRecherche(nom, prenom, terme){
+  if(!terme) return true;
+  const t = terme.trim().toLowerCase();
+  return (nom||'').toLowerCase().includes(t) || (prenom||'').toLowerCase().includes(t);
+}
+
+function champRecherche(id, onInput, placeholder){
+  return `<div class="field" style="max-width:320px"><input type="text" id="${id}" placeholder="🔎 ${placeholder||'Rechercher par nom ou prénom…'}" oninput="${onInput}" style="margin-bottom:0"></div>`;
+}
+
+function preserverFocusRecherche(id){
+  const champ = document.getElementById(id);
+  if(champ){ champ.focus(); champ.setSelectionRange(champ.value.length, champ.value.length); }
+}
+
 /* ============================================================
    IMPRESSION PDF : uniquement le tableau demandé, avec en-tête paroisse
    ============================================================ */
@@ -739,6 +763,10 @@ async function enterApp(){
   navigateTo('accueil');
   demarrerSuiviTempsReel();
   setTimeout(ajusterHauteurTopbar, 50);
+  if('Notification' in window && Notification.permission === 'default'){
+    const btn = document.getElementById('boutonActiverNotifs');
+    if(btn) btn.style.display = 'inline-block';
+  }
 }
 
 function periodeValide(){
@@ -832,6 +860,8 @@ function togglePresenceDropdown(){
   document.getElementById('presenceDropdown').classList.toggle('open');
 }
 
+let dernierCompteParExpediteur = {};
+
 async function chargerNotifications(){
   if(!sb || !currentUser) return;
   try{
@@ -847,9 +877,51 @@ async function chargerNotifications(){
       groupes[m.expediteur_nom].count++;
     });
     notificationsCache = Object.values(groupes);
+    notifierNouveauxMessages(groupes);
   }catch(e){ console.error(e); notificationsCache = []; }
   renderNotifPanel();
   mettreAJourBadgeMessagerie();
+}
+
+function notifierNouveauxMessages(groupesActuels){
+  if('Notification' in window && Notification.permission === 'granted'){
+    for(const nom in groupesActuels){
+      const compteActuel = groupesActuels[nom].count;
+      const compteAvant = dernierCompteParExpediteur[nom] || 0;
+      if(compteActuel > compteAvant){
+        const m = groupesActuels[nom].dernierMessage;
+        const apercu = m.type_message !== 'texte' ? '📎 Fichier joint' : (m.contenu || '');
+        try{
+          const notif = new Notification(nom, {
+            body: apercu,
+            icon: APP_LOGO_B64,
+            tag: 'catechese-message-'+nom, // évite d'empiler plusieurs notifications du même contact
+          });
+          notif.onclick = ()=>{
+            window.focus();
+            ouvrirNotification(nom);
+            notif.close();
+          };
+        }catch(e){ console.error(e); }
+      }
+    }
+  }
+  dernierCompteParExpediteur = {};
+  for(const nom in groupesActuels){ dernierCompteParExpediteur[nom] = groupesActuels[nom].count; }
+}
+
+async function demanderPermissionNotifications(){
+  if(!('Notification' in window)){
+    showToast("Ton navigateur ne supporte pas les notifications", true);
+    return;
+  }
+  const resultat = await Notification.requestPermission();
+  if(resultat === 'granted'){
+    showToast("Notifications activées ✓");
+    document.getElementById('boutonActiverNotifs')?.remove();
+  } else {
+    showToast("Notifications refusées — tu peux les réactiver dans les réglages du navigateur", true);
+  }
 }
 
 function renderNotifPanel(){
@@ -1100,11 +1172,13 @@ function estAnneeActuelle(enregistrement){
 }
 
 function renderInscriptionsList(){
-  const rows = catechumenesCache.map(c=>{
+  const terme = document.getElementById('rechercheCatechumenes')?.value || '';
+  const listeFiltree = catechumenesCache.filter(c=>correspondRecherche(c.nom, c.prenom, terme));
+  const rows = listeFiltree.map(c=>{
     const classe = classesCache.find(cl=>cl.id===c.class_id);
     return `
     <tr>
-      <td>${esc(c.nom)} ${esc(c.prenom)}</td>
+      <td><a href="#" onclick="voirResumeCatechumene('${c.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(c.nom)} ${esc(c.prenom)}</a></td>
       <td>${categorieLabel(c.categorie)}</td>
       <td>${esc(c.annee_catechese||'—')}</td>
       <td>${classe ? esc(classe.nom) : '<span style="color:var(--gris)">Non assigné</span>'}</td>
@@ -1116,22 +1190,88 @@ function renderInscriptionsList(){
         <button class="smallBtn del" onclick="deleteCatechumene('${c.id}')">Supprimer</button>
       </td>
     </tr>`;
-  }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--gris)">Aucun catéchumène inscrit</td></tr>`;
+  }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--gris)">Aucun catéchumène ${terme?'ne correspond à la recherche':'inscrit'}</td></tr>`;
 
   document.getElementById('inscriptionsBody').innerHTML = `
+    <div id="resumeCatechumeneZone"></div>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
-        <h3 style="border:none;margin:0;padding:0">Catéchumènes (${catechumenesCache.length})</h3>
+        <h3 style="border:none;margin:0;padding:0">Catéchumènes (${listeFiltree.length}${listeFiltree.length!==catechumenesCache.length?'/'+catechumenesCache.length:''})</h3>
         <div class="rowFlex">
           <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#inscriptionsBody table', 'Liste des catéchumènes inscrits')">Télécharger (PDF)</button>
           <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openInscriptionForm(null)">+ Nouveau catéchumène</button>
         </div>
       </div>
+      ${champRecherche('rechercheCatechumenes', "renderInscriptionsList()", "Rechercher un catéchumène…")}
       <table style="margin-top:14px">
         <thead><tr><th>Nom</th><th>Catégorie</th><th>Année</th><th>Classe</th><th>Statut</th><th>Baptisé</th><th>Téléphone</th><th class="noprint"></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+  preserverFocusRecherche('rechercheCatechumenes');
+}
+
+async function voirResumeCatechumene(id){
+  let c = trouverCatechumenePartout(id);
+  if(!c || c.date_naissance === undefined){
+    if(!sb) return;
+    const {data} = await sb.from('catechese_catechumenes').select('*, catechese_parents(*)').eq('id', id).maybeSingle();
+    if(data) c = data;
+  }
+  if(!c) return;
+  const classe = classesCache.find(cl=>cl.id===c.class_id);
+  const parent = c.catechese_parents && c.catechese_parents[0] ? c.catechese_parents[0] : {};
+  const pieces = Array.isArray(c.pieces_jointes) ? c.pieces_jointes : [];
+
+  const zone = document.getElementById('resumeCatechumeneZone');
+  if(!zone) return;
+  zone.innerHTML = `
+    <div class="card" id="resumeCatechumeneImprimable">
+      <div class="rowFlex" style="justify-content:space-between;align-items:flex-start">
+        <h3 style="border:none;padding:0;margin:0">Résumé — ${esc(c.nom)} ${esc(c.prenom)}</h3>
+        <button class="btn btn-annuler noprint" style="width:auto;padding:8px 16px" onclick="document.getElementById('resumeCatechumeneZone').innerHTML=''">✕ Fermer</button>
+      </div>
+      <div class="rowFlex" style="align-items:flex-start;margin-top:14px;gap:24px">
+        ${c.photo_url ? `<img src="${esc(c.photo_url)}" style="width:130px;height:130px;object-fit:cover;border-radius:10px;border:2px solid #1a1a1a">` : ''}
+        <div style="flex:1;min-width:240px">
+          <table>
+            <tbody>
+              <tr><td><b>Nom</b></td><td>${esc(c.nom)}</td></tr>
+              <tr><td><b>Prénom</b></td><td>${esc(c.prenom)}</td></tr>
+              <tr><td><b>Date de naissance</b></td><td>${c.date_naissance||'—'}</td></tr>
+              <tr><td><b>Lieu de naissance</b></td><td>${esc(c.lieu_naissance||'—')}</td></tr>
+              <tr><td><b>Quartier</b></td><td>${esc(c.quartier||'—')}</td></tr>
+              <tr><td><b>CEB</b></td><td>${esc(c.ceb||'—')}</td></tr>
+              <tr><td><b>Téléphone</b></td><td>${esc(c.telephone||'—')}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <table style="margin-top:16px">
+        <tbody>
+          <tr><td><b>Catégorie</b></td><td>${categorieLabel(c.categorie)}</td><td><b>Statut</b></td><td>${c.statut==='nouveau'?'Nouveau':'Ancien'}</td></tr>
+          <tr><td><b>Année de catéchèse</b></td><td>${esc(c.annee_catechese||'—')}</td><td><b>Classe</b></td><td>${classe?esc(classe.nom):'Non assigné'}</td></tr>
+          <tr><td><b>Baptisé(e)</b></td><td colspan="3">${c.baptise ? 'Oui — le '+(c.date_bapteme||'—')+' à '+esc(c.lieu_bapteme||'—') : 'Non'}</td></tr>
+        </tbody>
+      </table>
+      <h3 style="margin-top:18px">Informations des parents</h3>
+      <table>
+        <tbody>
+          <tr><td><b>Père</b></td><td>${esc(parent.nom_pere||'—')} ${esc(parent.prenom_pere||'')}</td></tr>
+          <tr><td><b>Mère</b></td><td>${esc(parent.nom_mere||'—')} ${esc(parent.prenom_mere||'')}</td></tr>
+          <tr><td><b>Contact des parents</b></td><td>${esc(parent.contact_parents||'—')}</td></tr>
+        </tbody>
+      </table>
+      ${pieces.length ? `
+      <h3 style="margin-top:18px">Pièces jointes</h3>
+      <div class="rowFlex noprint">
+        ${pieces.map((url,i)=>`<a href="${esc(url)}" target="_blank" class="smallBtn edit">📎 Document ${i+1}</a>`).join('')}
+      </div>` : ''}
+      <div class="noprint" style="margin-top:20px">
+        <button class="btn gold" style="width:auto;padding:11px 22px" onclick="imprimerAvecEntete('#resumeCatechumeneImprimable', 'Résumé du catéchumène — ${esc(c.nom)} ${esc(c.prenom)}')">Télécharger le résumé (PDF)</button>
+      </div>
+    </div>`;
+  zone.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function categorieLabel(c){
@@ -1315,9 +1455,11 @@ async function loadAnimateurs(){
 }
 
 function renderAnimateursList(){
-  const rows = animateursCache.map(a=>`
+  const terme = document.getElementById('rechercheAnimateurs')?.value || '';
+  const listeFiltree = animateursCache.filter(a=>correspondRecherche(a.nom, a.prenom, terme));
+  const rows = listeFiltree.map(a=>`
     <tr>
-      <td>${esc(a.nom)} ${esc(a.prenom)}</td>
+      <td><a href="#" onclick="voirResumeAnimateur('${a.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(a.nom)} ${esc(a.prenom)}</a></td>
       <td>${esc(a.profession||'')}</td>
       <td>${a.statut==='experimente' ? 'Expérimenté' : 'Nouveau'}</td>
       <td>${esc(a.telephone||'')}</td>
@@ -1325,22 +1467,67 @@ function renderAnimateursList(){
         <button class="smallBtn edit" onclick="openAnimateurForm('${a.id}')">Modifier</button>
         <button class="smallBtn del" onclick="deleteAnimateur('${a.id}')">Supprimer</button>
       </td>
-    </tr>`).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--gris)">Aucun animateur inscrit</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--gris)">Aucun animateur ${terme?'ne correspond à la recherche':'inscrit'}</td></tr>`;
 
   document.getElementById('animateursBody').innerHTML = `
+    <div id="resumeAnimateurZone"></div>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
-        <h3 style="border:none;margin:0;padding:0">Animateurs (${animateursCache.length})</h3>
+        <h3 style="border:none;margin:0;padding:0">Animateurs (${listeFiltree.length}${listeFiltree.length!==animateursCache.length?'/'+animateursCache.length:''})</h3>
         <div class="rowFlex">
           <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#animateursBody table', 'Liste des personnes inscrites comme animateurs')">Télécharger (PDF)</button>
           <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openAnimateurForm(null)">+ Nouvel animateur</button>
         </div>
       </div>
+      ${champRecherche('rechercheAnimateurs', "renderAnimateursList()", "Rechercher un animateur…")}
       <table style="margin-top:14px">
         <thead><tr><th>Nom</th><th>Profession</th><th>Statut</th><th>Téléphone</th><th class="noprint"></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+  preserverFocusRecherche('rechercheAnimateurs');
+}
+
+function voirResumeAnimateur(id){
+  const a = animateursCache.find(x=>x.id===id);
+  if(!a) return;
+  const classe = classesCache.find(cl=>cl.id===a.class_id);
+
+  const zone = document.getElementById('resumeAnimateurZone');
+  zone.innerHTML = `
+    <div class="card" id="resumeAnimateurImprimable">
+      <div class="rowFlex" style="justify-content:space-between;align-items:flex-start">
+        <h3 style="border:none;padding:0;margin:0">Résumé — ${esc(a.nom)} ${esc(a.prenom)}</h3>
+        <button class="btn btn-annuler noprint" style="width:auto;padding:8px 16px" onclick="document.getElementById('resumeAnimateurZone').innerHTML=''">✕ Fermer</button>
+      </div>
+      <div class="rowFlex" style="align-items:flex-start;margin-top:14px;gap:24px">
+        ${a.photo_url ? `<img src="${esc(a.photo_url)}" style="width:130px;height:130px;object-fit:cover;border-radius:10px;border:2px solid #1a1a1a">` : ''}
+        <div style="flex:1;min-width:240px">
+          <table>
+            <tbody>
+              <tr><td><b>Nom</b></td><td>${esc(a.nom)}</td></tr>
+              <tr><td><b>Prénom</b></td><td>${esc(a.prenom)}</td></tr>
+              <tr><td><b>Date de naissance</b></td><td>${a.date_naissance||'—'}</td></tr>
+              <tr><td><b>Profession</b></td><td>${esc(a.profession||'—')}</td></tr>
+              <tr><td><b>Téléphone</b></td><td>${esc(a.telephone||'—')}</td></tr>
+              <tr><td><b>E-mail</b></td><td>${esc(a.email||'—')}</td></tr>
+              <tr><td><b>Adresse</b></td><td>${esc(a.adresse||'—')}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <table style="margin-top:16px">
+        <tbody>
+          <tr><td><b>Sacrement</b></td><td>${ {baptise:'Baptisé',confirme:'Confirmé',les_deux:'Baptisé et confirmé'}[a.sacrement] || '—' }</td><td><b>Statut</b></td><td>${a.statut==='experimente'?'Expérimenté':'Nouveau'}</td></tr>
+          <tr><td><b>Année de catéchèse</b></td><td>${esc(a.annee_catechese||'—')}</td><td><b>Classe assignée</b></td><td>${classe?esc(classe.nom):'Non assignée'}</td></tr>
+          ${a.statut==='experimente' ? `<tr><td><b>Ancienne paroisse</b></td><td>${esc(a.ancienne_paroisse||'—')}</td><td><b>Ancien diocèse</b></td><td>${esc(a.ancien_diocese||'—')}</td></tr>` : ''}
+        </tbody>
+      </table>
+      <div class="noprint" style="margin-top:20px">
+        <button class="btn gold" style="width:auto;padding:11px 22px" onclick="imprimerAvecEntete('#resumeAnimateurImprimable', 'Résumé de l\\'animateur — ${esc(a.nom)} ${esc(a.prenom)}')">Télécharger le résumé (PDF)</button>
+      </div>
+    </div>`;
+  zone.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function openAnimateurForm(id){
@@ -1503,16 +1690,17 @@ function renderRepartitionListe(){
     ${cards}`;
 }
 
+let repartitionCatechumenesActuels = [];
+let repartitionClasseActuelle = null;
+
 async function renderRepartitionClasse(classeId){
   const cls = classesCache.find(c=>c.id===classeId);
-  const {data:catechumenes} = await sb.from('catechese_catechumenes').select('*').eq('class_id', classeId).order('nom');
+  const {data:catechumenes} = await sb.from('catechese_catechumenes').select('*, catechese_parents(*)').eq('class_id', classeId).order('nom');
+  repartitionCatechumenesActuels = catechumenes || [];
+  repartitionClasseActuelle = cls;
 
   const optionsAnimateurs = animateursCache.map(a=>`<option value="${a.id}" ${cls.animateur_id===a.id?'selected':''}>${esc(a.nom)} ${esc(a.prenom)}</option>`).join('');
   const anim = animateursCache.find(a=>a.id===cls.animateur_id);
-
-  const rows = (catechumenes||[]).map(c=>`
-    <tr><td>${esc(c.nom)} ${esc(c.prenom)}</td><td>${esc(c.telephone||'')}</td><td>${c.statut==='nouveau'?'Nouveau':'Ancien'}</td><td>${esc(cls.nom)}</td></tr>
-  `).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucun catéchumène dans cette classe</td></tr>`;
 
   document.getElementById('repartitionBody').innerHTML = `
     <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderRepartitionListe()">← Retour aux classes</button>
@@ -1529,18 +1717,41 @@ async function renderRepartitionClasse(classeId){
         <div><b>${esc(anim.nom)} ${esc(anim.prenom)}</b><div style="color:var(--gris);font-size:12px">Animateur assigné</div></div>
       </div>` : ''}
     </div>
+    <div id="resumeCatechumeneZone"></div>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
-        <h3 style="border:none;padding:0;margin:0">Liste des catéchumènes (${(catechumenes||[]).length})</h3>
+        <h3 style="border:none;padding:0;margin:0" id="titreListeClasse">Liste des catéchumènes</h3>
         <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#printZoneClasse', 'Liste des catéchumènes — ${esc(cls.nom)}')">Télécharger (PDF)</button>
       </div>
+      ${champRecherche('rechercheRepartitionClasse', "rendreListeCatechumenesClasse()", "Rechercher un catéchumène…")}
       <div id="printZoneClasse">
         <div style="text-align:right;font-weight:700;color:var(--bleu-nuit);margin-bottom:8px">
           ${anim ? 'Animateur : ' + esc(anim.nom) + ' ' + esc(anim.prenom) : 'Aucun animateur assigné'}
         </div>
-        <table id="tableCatechumenesClasse" style="margin-top:0"><thead><tr><th>Nom</th><th>Téléphone</th><th>Statut</th><th>Classe</th></tr></thead><tbody>${rows}</tbody></table>
+        <table id="tableCatechumenesClasse" style="margin-top:0"><thead><tr><th>Nom</th><th>Téléphone</th><th>Statut</th><th>Classe</th></tr></thead><tbody id="corpsListeClasse"></tbody></table>
       </div>
     </div>`;
+  rendreListeCatechumenesClasse();
+}
+
+function rendreListeCatechumenesClasse(){
+  const terme = document.getElementById('rechercheRepartitionClasse')?.value || '';
+  const cls = repartitionClasseActuelle;
+  const listeFiltree = repartitionCatechumenesActuels.filter(c=>correspondRecherche(c.nom, c.prenom, terme));
+
+  const titre = document.getElementById('titreListeClasse');
+  if(titre) titre.textContent = `Liste des catéchumènes (${listeFiltree.length}${listeFiltree.length!==repartitionCatechumenesActuels.length?'/'+repartitionCatechumenesActuels.length:''})`;
+
+  const corps = document.getElementById('corpsListeClasse');
+  if(!corps) return;
+  corps.innerHTML = listeFiltree.map(c=>`
+    <tr>
+      <td><a href="#" onclick="voirResumeCatechumene('${c.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(c.nom)} ${esc(c.prenom)}</a></td>
+      <td>${esc(c.telephone||'')}</td>
+      <td>${c.statut==='nouveau'?'Nouveau':'Ancien'}</td>
+      <td>${cls?esc(cls.nom):''}</td>
+    </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucun catéchumène ${terme?'ne correspond à la recherche':'dans cette classe'}</td></tr>`;
+  preserverFocusRecherche('rechercheRepartitionClasse');
 }
 
 async function assignerAnimateur(classeId){
@@ -1611,14 +1822,18 @@ function renderNotesListeClasses(){
   document.getElementById('notesBody').innerHTML = cards;
 }
 
+let notesCatechumenesActuels = [];
+let notesMapActuel = {};
+
 async function renderNotesClasse(classeId){
   const cls = classesCache.find(c=>c.id===classeId);
   const {data:catechumenes} = await sb.from('catechese_catechumenes').select('*').eq('class_id', classeId).order('nom');
-  const ids = (catechumenes||[]).map(c=>c.id);
-  let notesMap = {};
+  notesCatechumenesActuels = catechumenes || [];
+  const ids = notesCatechumenesActuels.map(c=>c.id);
+  notesMapActuel = {};
   if(ids.length){
     const {data:notes} = await sb.from('catechese_notes').select('*').in('catechumene_id', ids);
-    (notes||[]).forEach(n=>{ notesMap[n.catechumene_id] = n; });
+    (notes||[]).forEach(n=>{ notesMapActuel[n.catechumene_id] = n; });
   }
   let anim = null;
   if(cls.animateur_id){
@@ -1626,19 +1841,15 @@ async function renderNotesClasse(classeId){
     anim = data || null;
   }
 
-  const rows = (catechumenes||[]).map(c=>{
-    const n = notesMap[c.id] || {};
-    const cols = [1,2,3,4,5,6].map(i=>`<td><input type="number" step="0.01" min="0" max="20" style="width:60px;padding:6px" id="note_${i}_${c.id}" value="${n['note'+i] ?? ''}" oninput="recalculerMoyenne('${c.id}')"></td>`).join('');
-    return `<tr><td>${esc(c.nom)} ${esc(c.prenom)}</td>${cols}<td style="background:#0f2447;color:#fff;font-weight:700;text-align:center" id="moy_${c.id}">${n.moyenne ?? '—'}</td></tr>`;
-  }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--gris)">Aucun catéchumène dans cette classe</td></tr>`;
-
   document.getElementById('notesBody').innerHTML = `
     <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderNotesListeClasses()">← Retour aux classes</button>
+    <div id="resumeCatechumeneZone"></div>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
-        <h3 style="border:none;padding:0;margin:0">${esc(cls.nom)} — Notes et moyennes</h3>
+        <h3 style="border:none;padding:0;margin:0" id="titreNotesClasse">${esc(cls.nom)} — Notes et moyennes</h3>
         <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="synchroniserInputsAvantImpression('printZoneNotes');imprimerAvecEntete('#printZoneNotes', 'Notes et moyennes — ${esc(cls.nom)}')">Télécharger (PDF)</button>
       </div>
+      ${champRecherche('rechercheNotes', "rendreTableauNotes()", "Rechercher un catéchumène…")}
       <div id="printZoneNotes">
         <div style="text-align:right;font-weight:700;color:var(--bleu-nuit);margin-bottom:8px">
           ${anim ? 'Animateur : ' + esc(anim.nom) + ' ' + esc(anim.prenom) : 'Aucun animateur assigné'}
@@ -1646,12 +1857,30 @@ async function renderNotesClasse(classeId){
         <div style="overflow-x:auto">
         <table>
           <thead><tr><th>Catéchumène</th><th>N1</th><th>N2</th><th>N3</th><th>N4</th><th>N5</th><th>N6</th><th>Moyenne</th></tr></thead>
-          <tbody id="notesTableBody">${rows}</tbody>
+          <tbody id="notesTableBody"></tbody>
         </table>
         </div>
       </div>
       <div style="margin-top:16px"><button class="btn gold" style="width:auto;padding:11px 22px" onclick="enregistrerNotes('${classeId}')">Enregistrer toutes les notes</button></div>
     </div>`;
+  rendreTableauNotes();
+}
+
+function rendreTableauNotes(){
+  const terme = document.getElementById('rechercheNotes')?.value || '';
+  const listeFiltree = notesCatechumenesActuels.filter(c=>correspondRecherche(c.nom, c.prenom, terme));
+
+  const titre = document.getElementById('titreNotesClasse');
+  if(titre && terme) titre.textContent = titre.textContent.split(' (')[0] + ` (${listeFiltree.length}/${notesCatechumenesActuels.length})`;
+
+  const corps = document.getElementById('notesTableBody');
+  if(!corps) return;
+  corps.innerHTML = listeFiltree.map(c=>{
+    const n = notesMapActuel[c.id] || {};
+    const cols = [1,2,3,4,5,6].map(i=>`<td><input type="number" step="0.01" min="0" max="20" style="width:60px;padding:6px" id="note_${i}_${c.id}" value="${n['note'+i] ?? ''}" oninput="recalculerMoyenne('${c.id}')"></td>`).join('');
+    return `<tr><td><a href="#" onclick="voirResumeCatechumene('${c.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(c.nom)} ${esc(c.prenom)}</a></td>${cols}<td style="background:#0f2447;color:#fff;font-weight:700;text-align:center" id="moy_${c.id}">${n.moyenne ?? '—'}</td></tr>`;
+  }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--gris)">Aucun catéchumène ${terme?'ne correspond à la recherche':'dans cette classe'}</td></tr>`;
+  preserverFocusRecherche('rechercheNotes');
 }
 
 function recalculerMoyenne(catechumeneId){
@@ -1722,14 +1951,18 @@ function renderResultatsListeClasses(){
   document.getElementById('resultatsBody').innerHTML = cards;
 }
 
+let resultatsCatechumenesActuels = [];
+let resultatsNotesMapActuel = {};
+
 async function renderResultatsClasse(classeId){
   const cls = classesCache.find(c=>c.id===classeId);
   const {data:catechumenes} = await sb.from('catechese_catechumenes').select('*').eq('class_id', classeId).order('nom');
-  const ids = (catechumenes||[]).map(c=>c.id);
-  let notesMap = {};
+  resultatsCatechumenesActuels = catechumenes || [];
+  const ids = resultatsCatechumenesActuels.map(c=>c.id);
+  resultatsNotesMapActuel = {};
   if(ids.length){
     const {data:notes} = await sb.from('catechese_notes').select('*').in('catechumene_id', ids);
-    (notes||[]).forEach(n=>{ notesMap[n.catechumene_id] = n; });
+    (notes||[]).forEach(n=>{ resultatsNotesMapActuel[n.catechumene_id] = n; });
   }
   let anim = null;
   if(cls.animateur_id){
@@ -1737,8 +1970,36 @@ async function renderResultatsClasse(classeId){
     anim = data || null;
   }
 
-  const rows = (catechumenes||[]).map(c=>{
-    const n = notesMap[c.id];
+  document.getElementById('resultatsBody').innerHTML = `
+    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderResultatsListeClasses()">← Retour aux classes</button>
+    <div id="resumeCatechumeneZone"></div>
+    <div class="card">
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0" id="titreResultatsClasse">${esc(cls.nom)} — Résultats</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#printZoneResultats', 'Résultats — ${esc(cls.nom)}')">Télécharger (PDF)</button>
+      </div>
+      ${champRecherche('rechercheResultats', "rendreTableauResultats()", "Rechercher un catéchumène…")}
+      <div id="printZoneResultats">
+        <div style="text-align:right;font-weight:700;color:var(--bleu-nuit);margin-bottom:8px">
+          ${anim ? 'Animateur : ' + esc(anim.nom) + ' ' + esc(anim.prenom) : 'Aucun animateur assigné'}
+        </div>
+        <table id="tableResultatsClasse"><thead><tr><th>Catéchumène</th><th>Moyenne</th><th>Résultat</th></tr></thead><tbody id="resultatsTableBody"></tbody></table>
+      </div>
+    </div>`;
+  rendreTableauResultats();
+}
+
+function rendreTableauResultats(){
+  const terme = document.getElementById('rechercheResultats')?.value || '';
+  const listeFiltree = resultatsCatechumenesActuels.filter(c=>correspondRecherche(c.nom, c.prenom, terme));
+
+  const titre = document.getElementById('titreResultatsClasse');
+  if(titre && terme) titre.textContent = titre.textContent.split(' (')[0] + ` (${listeFiltree.length}/${resultatsCatechumenesActuels.length})`;
+
+  const corps = document.getElementById('resultatsTableBody');
+  if(!corps) return;
+  corps.innerHTML = listeFiltree.map(c=>{
+    const n = resultatsNotesMapActuel[c.id];
     const moyenne = n?.moyenne;
     let badge = `<span class="badge" style="background:#eee;color:var(--gris)">Pas de moyenne</span>`;
     if(moyenne !== null && moyenne !== undefined){
@@ -1746,23 +2007,9 @@ async function renderResultatsClasse(classeId){
         ? `<span class="badge" style="background:#dcfce7;color:var(--vert)">Admis(e) en classe supérieure</span>`
         : `<span class="badge" style="background:#fee2e2;color:var(--rouge)">Recalé(e)</span>`;
     }
-    return `<tr><td>${esc(c.nom)} ${esc(c.prenom)}</td><td>${moyenne ?? '—'}</td><td>${badge}</td></tr>`;
-  }).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--gris)">Aucun catéchumène dans cette classe</td></tr>`;
-
-  document.getElementById('resultatsBody').innerHTML = `
-    <button class="btn" style="width:auto;padding:8px 16px;margin-bottom:14px;background:var(--beige);color:var(--rouge-bordeaux);border:1.5px solid var(--rouge-bordeaux)" onclick="renderResultatsListeClasses()">← Retour aux classes</button>
-    <div class="card">
-      <div class="rowFlex" style="justify-content:space-between">
-        <h3 style="border:none;padding:0;margin:0">${esc(cls.nom)} — Résultats</h3>
-        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#printZoneResultats', 'Résultats — ${esc(cls.nom)}')">Télécharger (PDF)</button>
-      </div>
-      <div id="printZoneResultats">
-        <div style="text-align:right;font-weight:700;color:var(--bleu-nuit);margin-bottom:8px">
-          ${anim ? 'Animateur : ' + esc(anim.nom) + ' ' + esc(anim.prenom) : 'Aucun animateur assigné'}
-        </div>
-        <table id="tableResultatsClasse"><thead><tr><th>Catéchumène</th><th>Moyenne</th><th>Résultat</th></tr></thead><tbody>${rows}</tbody></table>
-      </div>
-    </div>`;
+    return `<tr><td><a href="#" onclick="voirResumeCatechumene('${c.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(c.nom)} ${esc(c.prenom)}</a></td><td>${moyenne ?? '—'}</td><td>${badge}</td></tr>`;
+  }).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--gris)">Aucun catéchumène ${terme?'ne correspond à la recherche':'dans cette classe'}</td></tr>`;
+  preserverFocusRecherche('rechercheResultats');
 }
 
 /* ============================================================
@@ -1889,12 +2136,37 @@ async function validerPaiement(){
 
 async function renderComptaHistorique(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
-  const {data} = await sb.from('catechese_paiements').select('*, catechese_catechumenes(nom,prenom)').order('date_paiement', {ascending:false});
+  const {data} = await sb.from('catechese_paiements').select('*, catechese_catechumenes(id,nom,prenom)').order('date_paiement', {ascending:false});
   paiementsCache = (data || []).filter(estAnneeActuelle);
   const autorise = peutGererComptabilite();
-  const rows = paiementsCache.map(p=>`
+
+  document.getElementById('comptaTabContent').innerHTML = `
+    <div id="resumeCatechumeneZone"></div>
+    <div id="editionPaiementZone"></div>
+    <div class="card">
+      <div class="rowFlex" style="justify-content:space-between">
+        <h3 style="border:none;padding:0;margin:0" id="titreHistoriquePaiements">Historique des paiements</h3>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#comptaTabContent table', 'Historique des paiements')">Télécharger (PDF)</button>
+      </div>
+      ${champRecherche('rechercheHistorique', "rendreTableauHistorique()", "Rechercher un catéchumène…")}
+      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th>${autorise?'<th class="noprint"></th>':''}</tr></thead><tbody id="corpsHistoriquePaiements"></tbody></table>
+    </div>`;
+  rendreTableauHistorique();
+}
+
+function rendreTableauHistorique(){
+  const terme = document.getElementById('rechercheHistorique')?.value || '';
+  const autorise = peutGererComptabilite();
+  const listeFiltree = paiementsCache.filter(p=>correspondRecherche(p.catechese_catechumenes?.nom, p.catechese_catechumenes?.prenom, terme));
+
+  const titre = document.getElementById('titreHistoriquePaiements');
+  if(titre) titre.textContent = `Historique des paiements${listeFiltree.length!==paiementsCache.length?' ('+listeFiltree.length+'/'+paiementsCache.length+')':''}`;
+
+  const corps = document.getElementById('corpsHistoriquePaiements');
+  if(!corps) return;
+  corps.innerHTML = listeFiltree.map(p=>`
     <tr>
-      <td>${esc(p.catechese_catechumenes?.nom||'')} ${esc(p.catechese_catechumenes?.prenom||'')}</td>
+      <td><a href="#" onclick="voirResumeCatechumene('${p.catechese_catechumenes?.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(p.catechese_catechumenes?.nom||'')} ${esc(p.catechese_catechumenes?.prenom||'')}</a></td>
       <td>${p.date_paiement||''}</td>
       <td>${p.avance} FCFA</td>
       <td>${p.reste} FCFA</td>
@@ -1903,17 +2175,8 @@ async function renderComptaHistorique(){
         <button class="smallBtn edit" onclick="ouvrirEditionPaiement('${p.id}')">Modifier</button>
         <button class="smallBtn del" onclick="supprimerPaiement('${p.id}')">Supprimer</button>
       </td>` : ''}
-    </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--gris)">Aucun paiement enregistré</td></tr>`;
-
-  document.getElementById('comptaTabContent').innerHTML = `
-    <div id="editionPaiementZone"></div>
-    <div class="card">
-      <div class="rowFlex" style="justify-content:space-between">
-        <h3 style="border:none;padding:0;margin:0">Historique des paiements</h3>
-        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#comptaTabContent table', 'Historique des paiements')">Télécharger (PDF)</button>
-      </div>
-      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th>${autorise?'<th class="noprint"></th>':''}</tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
+    </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--gris)">Aucun paiement ${terme?'ne correspond à la recherche':'enregistré'}</td></tr>`;
+  preserverFocusRecherche('rechercheHistorique');
 }
 
 function ouvrirEditionPaiement(id){
@@ -2475,6 +2738,7 @@ function renderAttestationForm(){
       <div id="attInfosCatechumene" style="color:var(--gris);font-size:13px;margin-top:8px"></div>
       <button class="btn gold" style="width:auto;padding:11px 24px;margin-top:14px" onclick="genererAttestation()">Générer et enregistrer</button>
     </div>
+    <div id="resumeCatechumeneZone"></div>
     <div id="attestationApercu"></div>
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
@@ -2544,21 +2808,34 @@ let attestationsCache = [];
 
 async function chargerAttestationsListe(){
   if(!sb){ showToast("Supabase non configuré", true); return; }
-  const {data} = await sb.from('catechese_attestations').select('*, catechese_catechumenes(nom,prenom)').order('created_at', {ascending:false});
+  const {data} = await sb.from('catechese_attestations').select('*, catechese_catechumenes(id,nom,prenom)').order('created_at', {ascending:false});
   attestationsCache = (data || []).filter(estAnneeActuelle);
-  const rows = attestationsCache.map(a=>`
+  const el = document.getElementById('attestationsListe');
+  if(!el) return;
+  el.innerHTML = `
+    ${champRecherche('rechercheAttestations', "rendreTableauAttestations()", "Rechercher un catéchumène…")}
+    <div id="editionAttestationZone"></div>
+    <table><thead><tr><th>Catéchumène</th><th>Raison</th><th>Date</th><th class="noprint"></th></tr></thead><tbody id="corpsAttestations"></tbody></table>`;
+  rendreTableauAttestations();
+}
+
+function rendreTableauAttestations(){
+  const terme = document.getElementById('rechercheAttestations')?.value || '';
+  const listeFiltree = attestationsCache.filter(a=>correspondRecherche(a.catechese_catechumenes?.nom, a.catechese_catechumenes?.prenom, terme));
+
+  const corps = document.getElementById('corpsAttestations');
+  if(!corps) return;
+  corps.innerHTML = listeFiltree.map(a=>`
     <tr style="cursor:pointer" onclick="voirAttestation('${a.id}')">
-      <td>${esc(a.catechese_catechumenes?.nom||'')} ${esc(a.catechese_catechumenes?.prenom||'')}</td>
+      <td><a href="#" onclick="event.stopPropagation();voirResumeCatechumene('${a.catechese_catechumenes?.id}');return false;" style="color:var(--bleu-nuit);font-weight:600;text-decoration:underline">${esc(a.catechese_catechumenes?.nom||'')} ${esc(a.catechese_catechumenes?.prenom||'')}</a></td>
       <td>${esc(a.raison||'')}</td>
       <td>${a.date_delivrance||''}</td>
       <td class="noprint rowFlex" onclick="event.stopPropagation()">
         <button class="smallBtn edit" onclick="ouvrirEditionAttestation('${a.id}')">Modifier</button>
         <button class="smallBtn del" onclick="supprimerAttestation('${a.id}')">Supprimer</button>
       </td>
-    </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucune attestation émise</td></tr>`;
-  const el = document.getElementById('attestationsListe');
-  if(!el) return;
-  el.innerHTML = `<div id="editionAttestationZone"></div><table><thead><tr><th>Catéchumène</th><th>Raison</th><th>Date</th><th class="noprint"></th></tr></thead><tbody>${rows}</tbody></table>`;
+    </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--gris)">Aucune attestation ${terme?'ne correspond à la recherche':'émise'}</td></tr>`;
+  preserverFocusRecherche('rechercheAttestations');
 }
 
 function voirAttestation(id){
