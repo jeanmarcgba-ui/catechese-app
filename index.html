@@ -307,7 +307,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-23-01"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-23-02"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -357,6 +357,26 @@ exception when others then
   raise notice 'Etape ignoree (contrainte role) : %', sqlerrm;
 end $do$;
 
+-- Permet de supprimer une classe même si des catéchumènes/animateurs y sont encore assignés
+-- (ils redeviennent simplement "non assignés" au lieu de bloquer la suppression)
+do $do$
+begin
+  alter table catechese_catechumenes drop constraint if exists catechese_catechumenes_class_id_fkey;
+  alter table catechese_catechumenes add constraint catechese_catechumenes_class_id_fkey
+    foreign key (class_id) references catechese_classes(id) on delete set null;
+exception when others then
+  raise notice 'Etape ignoree (cle etrangere catechumenes) : %', sqlerrm;
+end $do$;
+
+do $do$
+begin
+  alter table catechese_animateurs drop constraint if exists catechese_animateurs_class_id_fkey;
+  alter table catechese_animateurs add constraint catechese_animateurs_class_id_fkey
+    foreign key (class_id) references catechese_classes(id) on delete set null;
+exception when others then
+  raise notice 'Etape ignoree (cle etrangere animateurs) : %', sqlerrm;
+end $do$;
+
 -- Classes de catéchèse (Phase 1)
 create table if not exists catechese_classes (
   id uuid primary key default gen_random_uuid(),
@@ -386,7 +406,7 @@ create table if not exists catechese_catechumenes (
   telephone text,
   photo_url text,
   pieces_jointes jsonb default '[]',
-  class_id uuid references catechese_classes(id),
+  class_id uuid references catechese_classes(id) on delete set null,
   annee_catechese text,
   created_at timestamptz default now()
 );
@@ -418,7 +438,7 @@ create table if not exists catechese_animateurs (
   ancienne_paroisse text,
   ancien_diocese text,
   photo_url text,
-  class_id uuid references catechese_classes(id),
+  class_id uuid references catechese_classes(id) on delete set null,
   annee_catechese text,
   created_at timestamptz default now()
 );
@@ -3407,9 +3427,13 @@ async function addClasse(){
 }
 
 async function deleteClasse(id){
-  if(!confirm("Supprimer cette classe ?")) return;
+  if(!confirm("Supprimer cette classe ?\n\nLes catéchumènes et animateurs qui y sont assignés ne seront pas supprimés, mais deviendront « non assignés ».")) return;
   const {error} = await sb.from('catechese_classes').delete().eq('id', id);
-  if(error){ showToast("Erreur : "+error.message, true); return; }
+  if(error){
+    if(error.message.includes('foreign key')) showToast("Impossible de supprimer : relance le script SQL complet (Option → Script SQL) pour appliquer la dernière mise à jour, puis réessaie.", true);
+    else showToast("Erreur : "+error.message, true);
+    return;
+  }
   showToast("Classe supprimée");
   renderOptionClasses();
 }
