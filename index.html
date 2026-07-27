@@ -307,7 +307,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-23-05"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-23-06"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -1218,12 +1218,12 @@ function renderInscriptionsList(){
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;margin:0;padding:0">Catéchumènes (${listeFiltree.length}${listeFiltree.length!==catechumenesCache.length?'/'+catechumenesCache.length:''})</h3>
         <div class="rowFlex">
-          <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#inscriptionsBody table', 'Liste des catéchumènes inscrits')">Télécharger (PDF)</button>
+          <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableListeInscriptions', 'Liste des catéchumènes inscrits')">Télécharger (PDF)</button>
           <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openInscriptionForm(null)">+ Nouveau catéchumène</button>
         </div>
       </div>
       ${champRecherche('rechercheCatechumenes', "renderInscriptionsList()", "Rechercher un catéchumène…")}
-      <table style="margin-top:14px">
+      <table id="tableListeInscriptions" style="margin-top:14px">
         <thead><tr><th>Nom</th><th>Catégorie</th><th>Année</th><th>Classe</th><th>Statut</th><th>Baptisé</th><th>Téléphone</th><th class="noprint"></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1561,12 +1561,12 @@ function renderAnimateursList(){
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;margin:0;padding:0">Animateurs (${listeFiltree.length}${listeFiltree.length!==animateursCache.length?'/'+animateursCache.length:''})</h3>
         <div class="rowFlex">
-          <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#animateursBody table', 'Liste des personnes inscrites comme animateurs')">Télécharger (PDF)</button>
+          <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableListeAnimateurs', 'Liste des personnes inscrites comme animateurs')">Télécharger (PDF)</button>
           <button class="btn gold" style="width:auto;padding:10px 18px" onclick="openAnimateurForm(null)">+ Nouvel animateur</button>
         </div>
       </div>
       ${champRecherche('rechercheAnimateurs', "renderAnimateursList()", "Rechercher un animateur…")}
-      <table style="margin-top:14px">
+      <table id="tableListeAnimateurs" style="margin-top:14px">
         <thead><tr><th>Nom</th><th>Profession</th><th>Statut</th><th>Téléphone</th><th class="noprint"></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -2232,10 +2232,10 @@ async function renderComptaHistorique(){
     <div class="card">
       <div class="rowFlex" style="justify-content:space-between">
         <h3 style="border:none;padding:0;margin:0" id="titreHistoriquePaiements">Historique des paiements</h3>
-        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#comptaTabContent table', 'Historique des paiements')">Télécharger (PDF)</button>
+        <button class="btn ghost" style="width:auto;padding:10px 18px" onclick="imprimerAvecEntete('#tableHistoriquePaiements', 'Historique des paiements')">Télécharger (PDF)</button>
       </div>
       ${champRecherche('rechercheHistorique', "rendreTableauHistorique()", "Rechercher un catéchumène…")}
-      <table style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th>${autorise?'<th class="noprint"></th>':''}</tr></thead><tbody id="corpsHistoriquePaiements"></tbody></table>
+      <table id="tableHistoriquePaiements" style="margin-top:14px"><thead><tr><th>Catéchumène</th><th>Date</th><th>Montant payé</th><th>Reste</th><th>Type</th>${autorise?'<th class="noprint"></th>':''}</tr></thead><tbody id="corpsHistoriquePaiements"></tbody></table>
     </div>`;
   rendreTableauHistorique();
 }
