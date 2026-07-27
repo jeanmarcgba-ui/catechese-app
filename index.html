@@ -307,7 +307,7 @@
    Supabase (Project Settings > API), puis exécute schema.sql
    dans l'éditeur SQL de Supabase avant la première utilisation.
    ============================================================ */
-const APP_VERSION = "2026-07-23-06"; // change à chaque nouvelle version envoyée
+const APP_VERSION = "2026-07-24-01"; // change à chaque nouvelle version envoyée
 const SUPABASE_URL = "https://rbnsymxybhihspknfqdb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJibnN5bXh5YmhpaHNwa25mcWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTk4MDQsImV4cCI6MjA5ODAzNTgwNH0.S5Fhnsxhp2-fpThZnCksMoYNyHg-7Kr0FVtGX0ZEdUY";
 
@@ -346,6 +346,15 @@ create table if not exists catechese_app_users (
 -- Si la table existait déjà avant cette mise à jour, on ajoute les colonnes manquantes :
 alter table catechese_app_users add column if not exists nom_utilisateur text;
 alter table catechese_app_users add column if not exists code_recuperation text;
+
+-- Abonnements aux notifications push (un par appareil/navigateur)
+create table if not exists catechese_push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  nom_utilisateur text not null,
+  endpoint text not null unique,
+  subscription jsonb not null,
+  created_at timestamptz default now()
+);
 
 -- Autorise le rôle 'tresorerie' si la table existait déjà avec l'ancienne contrainte
 do $do$
@@ -539,6 +548,7 @@ alter table catechese_attestations disable row level security;
 alter table catechese_actualites disable row level security;
 alter table catechese_messages disable row level security;
 alter table catechese_presence disable row level security;
+alter table catechese_push_subscriptions disable row level security;
 
 -- Les 2 blocs ci-dessous sont protégés : si l'un d'eux échoue (ex: permissions),
 -- l'erreur est absorbée ici et n'annule JAMAIS les lignes de désactivation RLS ci-dessus.
@@ -786,6 +796,8 @@ async function enterApp(){
   if('Notification' in window && Notification.permission === 'default'){
     const btn = document.getElementById('boutonActiverNotifs');
     if(btn) btn.style.display = 'inline-block';
+  } else if('Notification' in window && Notification.permission === 'granted'){
+    activerNotificationsPush();
   }
 }
 
@@ -930,6 +942,15 @@ function notifierNouveauxMessages(groupesActuels){
   for(const nom in groupesActuels){ dernierCompteParExpediteur[nom] = groupesActuels[nom].count; }
 }
 
+const VAPID_PUBLIC_KEY = "BLwfIHxwr_61ovYIvltdr9-QI3_kSiBcXhG91xCeNH1cC7EFfE9IYS2bHrdi9ghzxQ3O0ZebX03hhn9E7mx4-fA";
+
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c=>c.charCodeAt(0)));
+}
+
 async function demanderPermissionNotifications(){
   if(!('Notification' in window)){
     showToast("Ton navigateur ne supporte pas les notifications", true);
@@ -939,9 +960,35 @@ async function demanderPermissionNotifications(){
   if(resultat === 'granted'){
     showToast("Notifications activées ✓");
     document.getElementById('boutonActiverNotifs')?.remove();
+    await activerNotificationsPush();
   } else {
     showToast("Notifications refusées — tu peux les réactiver dans les réglages du navigateur", true);
   }
+}
+
+async function activerNotificationsPush(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+    console.warn("Notifications push non supportées sur ce navigateur");
+    return; // Les notifications fonctionneront quand même tant que l'appli reste ouverte
+  }
+  try{
+    const delaiMax = new Promise((_,reject)=>setTimeout(()=>reject(new Error('délai dépassé')), 8000));
+    const registration = await Promise.race([navigator.serviceWorker.ready, delaiMax]);
+    let subscription = await registration.pushManager.getSubscription();
+    if(!subscription){
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+    if(sb && currentUser){
+      await sb.from('catechese_push_subscriptions').upsert({
+        nom_utilisateur: currentUser.nom,
+        endpoint: subscription.endpoint,
+        subscription: subscription.toJSON(),
+      }, {onConflict: 'endpoint'});
+    }
+  }catch(e){ console.error("Abonnement push impossible :", e); }
 }
 
 function renderNotifPanel(){
